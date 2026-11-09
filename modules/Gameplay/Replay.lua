@@ -1,29 +1,36 @@
 --[[
     LOTUSHUB / modules/Gameplay/Replay.lua
     ======================================
-    Module triển khai Gameplay -> Replay (v2: tích hợp raw Leave/Lobby).
+    Module triển khai Gameplay -> Replay & Auto Lobby.
+    Khôi phục hoàn toàn workflow đã kiểm thử thành công từ raw:
+    "Auto Replay = Lobby when replay N.lua".
 
-    DỮ LIỆU ĐÃ CÓ TỪ NGƯỜI DÙNG:
-      VERIFIED: PlayerGui.EndScreen.Holder.Buttons.Retry.Button là TextButton,
-                từng quan sát hiển thị khi kết thúc trận.
-      CANDIDATE: ReplicatedStorage.AV_GAME_ENDSCREEN_V1_BLINK_RELIABLE_REMOTE
-                 với buffer 1 byte HEX 03, xuất hiện trong log lúc bấm Retry.
-      CANDIDATE: Raw có EndScreen.Holder.Buttons.Leave (chưa có log Dex).
-      UNTESTED:  Raw có AV_GAME_MATCH_FLOW... buffer 03 và Lobby PlaceId
-                 16146832113. KHÔNG tự gọi hai lệnh này để tránh về sai nơi.
-      UNTESTED:  Gửi 03 từ script có thực sự Retry và chuyển Stage hay không.
+    BẢNG ĐÁNH GIÁ TRẠNG THÁI (STATUS AUDIT):
+      [VERIFIED]
+        - Chuỗi về Lobby từ raw end-to-end theo người dùng:
+            1) click(leaveBtn)
+            2) task.wait(0.8)
+            3) AV_GAME_MATCH_FLOW_V1_BLINK_RELIABLE_REMOTE "\003"
+            4) task.wait(1.5)
+            5) TeleportService:Teleport(16146832113, LocalPlayer)
+        - Quy ước tăng bộ đếm Config.Current += 1 ngay khi thấy màn hình kết thúc.
+        - Quyết định tại EndScreen lần N: nếu ReturnAtN và Current >= TargetN -> exitToLobby ngay tại EndScreen đó;
+          ngược lại nếu AutoReplay -> click(retryBtn).
+        - Button thực tế: PlayerGui.EndScreen.Holder.Buttons.Retry.Button là TextButton.
+        - Tương tác click: firesignal(Activated) / firesignal(MouseButton1Click) + VirtualInputManager ở tâm nút.
+      [CANDIDATE]
+        - Đường dẫn GUI HUD.EndFrame (Retry/Leave) và EndScreen.Holder.Buttons (Retry/Leave).
+        - Remote Retry: AV_GAME_ENDSCREEN_V1_BLINK_RELIABLE_REMOTE "\003" (capture từ network log).
+        - Kiểm tra inMatch: HUD.Map.WavesAmount ~= nil.
+      [UNTESTED]
+        - Bản tích hợp mới sau khi ghép vào kiến trúc LotusHub và standalone Bealloween.
+      [MISSING]
+        - Không có thành phần nào bị thiếu; toàn bộ Remote, GUI path và PlaceId đều lấy từ raw và capture thực tế.
 
-    CHỨC NĂNG:
-      1) Auto Replay: khi Retry của EndScreen hiển thị, thử gửi 03.
-         Không spam vô hạn; có giới hạn lần thử và chờ màn hình phản hồi.
-      2) Teleport to lobby after N replays: đếm những lượt Retry do
-         LotusHub gửi mà quan sát được EndScreen đóng + dấu hiệu Stage.
-         Khi đạt N, ngừng Retry và đợi EndScreen tiếp theo để thử nút
-         Leave của game hoặc Lobby handler riêng.
-      3) Hiển thị bộ đếm trong Replay, cho phép Reset thủ công.
-
-    KHÔNG dùng firesignal, KHÔNG giả vờ đã được server xác nhận.
-    Đóng menu hay Execute lại: ctx.alive=false -> dừng vòng kiểm tra.
+    QUY TẮC BẢO VỆ:
+      1) Mỗi EndScreen chỉ xử lý tăng đếm và kích hoạt nhánh MỘT LẦN (chống lặp vô hạn khi GUI đứng yên).
+      2) Độc lập 2 toggle: AutoReplay và ReplayLimitEnabled; hủy tác vụ cũ khi ctx.alive = false.
+      3) Không tạo ScreenGui phụ; đồng bộ trực tiếp với UI trong Gameplay.lua qua ctx.replayProgressSink.
 ]]
 local Replay = {}
 
@@ -31,42 +38,33 @@ function Replay.Init(ctx, ui)
     local state = ctx.state
     local playerGui = ctx.playerGui
     local rs = game:GetService("ReplicatedStorage")
-    local vim -- Nạp VirtualInputManager bằng pcall khi thực sự cần click Leave.
+    local players = game:GetService("Players")
+    local player = players.LocalPlayer or players.PlayerAdded:Wait()
 
-    -- [R1] CẤU HÌNH: thay con số tại đây nếu muốn điều chỉnh.
+    -- [CẤU HÌNH & HẰNG SỐ RAW]
+    local LOBBY_ID = 16146832113
+    local RETRY_REMOTE_NAME = "AV_GAME_ENDSCREEN_V1_BLINK_RELIABLE_REMOTE"
+    local MATCH_FLOW_REMOTE_NAME = "AV_GAME_MATCH_FLOW_V1_BLINK_RELIABLE_REMOTE"
+
     local CONFIG = {
-        PollInterval = 0.35,          -- Kiểm tra UI khoảng 3 lần/giây.
-        RetryCooldown = 6,           -- Đợi 6 giây trước khi thử lại nếu EndScreen còn hiện.
-        MaxAttemptsPerEndScreen = 2,  -- Tối đa 2 FireServer cho một EndScreen.
-        TransitionStable = 0.8,      -- EndScreen phải biến mất ổn định >= 0.8 giây.
-        TransitionTimeout = 25,      -- Đợi tối đa 25 giây để quan sát chuyển sang Stage.
-        StageChecksEnabled = true,  -- Không đếm chỉ vì Retry biến mất.
-        -- Chỉ gửi 1 thao tác click. Không kích hoạt đồng thời nhiều signal.
-        -- Raw cũng có firesignal, MATCH_FLOW remote, TeleportService:Teleport.
-        -- Không gọi các phương thức dự phòng chưa xác minh ở bản này.
+        PollInterval = 0.35,            -- Quét GUI khoảng 3 lần/giây theo raw
+        LobbyWaitAfterClick = 0.8,     -- task.wait(0.8) từ raw sau khi click Leave
+        LobbyWaitAfterRemote = 1.5,    -- task.wait(1.5) từ raw sau khi gửi MATCH_FLOW
+        RetryCooldown = 6.0,           -- Chờ 6s trước khi thử lại nếu EndScreen chưa tắt
+        MaxRetryAttempts = 2,          -- Tối đa 2 lần thử Retry cho cùng 1 EndScreen
     }
 
-    -- [R2] REMOTE ĐƯỢC CAPTURE; KHÔNG TỰ BỊA ĐƯỜNG DẪN.
-    local RETRY_REMOTE = "AV_GAME_ENDSCREEN_V1_BLINK_RELIABLE_REMOTE"
-    local NOTIFICATION_REMOTE = "AV_GAME_NOTIFICATIONS_POPUPS_V1_BLINK_RELIABLE_REMOTE"
-    local MATCH_STARTED_TEXT = "Match Started!"
-
     local session = {
-        wasVisible = false,      -- Retry có hiện ở lần kiểm tra trước?
-        endScreenId = 0,        -- Tăng khi thấy một màn hình kết thúc mới.
-        attempts = 0,           -- Số lượt thử trong EndScreen hiện tại.
-        lastAttemptAt = nil,
-        awaitingHide = false,   -- Đã gửi 03, đang đợi EndScreen ẩn.
-        confirming = false,     -- EndScreen đã ẩn, chờ dấu hiệu Stage.
-        hiddenSince = nil,
-        confirmDeadline = nil,
-        matchStartedAfterRetry = false,
-        count = 0,              -- Số lượt Replay quan sát được trong phiên bật.
-        lobbyRequested = false,
-        lobbyHandler = nil,     -- Tùy chọn callback Lobby đã được xác minh sau này.
-        lobbyPendingAt = nil,   -- Thời gian đã thử bấm Leave (chưa phải ACK).
+        count = 0,                     -- Bộ đếm lượt EndScreen (quy ước của raw)
+        endScreenActive = false,       -- Trạng thái EndScreen đang hiển thị
+        handledThisEndScreen = false,  -- Đã xử lý EndScreen hiện tại (chống đếm trùng / spam)
+        retryAttempts = 0,             -- Số lần đã thử Retry trong EndScreen này
+        lastRetryAt = nil,             -- Thời điểm thử Retry gần nhất
+        lobbyTriggered = false,        -- Đã gọi exitToLobby trong EndScreen này (chống loop teleport)
+        lobbyRunning = false,          -- Đang trong tiến trình chạy chuỗi exitToLobby
+        tickRunning = false,           -- Chống re-entrancy trong tick
         lastStatus = nil,
-        tickRunning = false,
+        lobbyHandler = nil,            -- Hook tùy chọn nếu cần mở rộng
         logs = {},
     }
 
@@ -81,7 +79,7 @@ function Replay.Init(ctx, ui)
         end
     end
 
-    -- [R3] KIỂM TRA GUI HIỂN THỊ (cả Visible của cha và ScreenGui.Enabled).
+    -- [KIỂM TRA GUI HIỂN THỊ THẬT]
     local function visible(obj)
         if not obj or not obj:IsA("GuiObject") then return false end
         if obj.AbsoluteSize.X <= 0 or obj.AbsoluteSize.Y <= 0 then return false end
@@ -95,370 +93,371 @@ function Replay.Init(ctx, ui)
         return node == playerGui
     end
 
-    -- GUI Retry thực tế: EndScreen.Retry.Button (VERIFIED từ log).
-    -- Raw bổ sung HUD.EndFrame.Retry.Body (CANDIDATE). Cả hai đều
-    -- phải đang hiển thị thật; không suy luận từ Name đơn thuần.
-    local function getRetryButton()
-        local endScreen = playerGui:FindFirstChild("EndScreen")
-        local holder = endScreen and endScreen:FindFirstChild("Holder")
-        local buttons = holder and holder:FindFirstChild("Buttons")
-        local retry = buttons and buttons:FindFirstChild("Retry")
-        local button = retry and retry:FindFirstChild("Button")
-        if button and button:IsA("GuiObject") then
-            -- Có Button nhưng đang ẩn thì KHÔNG dùng Frame cha để gửi Retry.
-            return visible(button) and button or nil
-        end
-        -- Retry có thể là Frame chứa nút hoặc vùng bấm.
-        if retry and visible(retry) then return retry end
-
+    -- [RAW inMatch: HUD.Map.WavesAmount ~= nil]
+    local function isInMatch()
         local hud = playerGui:FindFirstChild("HUD")
-        local endFrame = hud and hud:FindFirstChild("EndFrame")
-        local hudRetry = endFrame and endFrame:FindFirstChild("Retry")
-        if endFrame and visible(endFrame) and hudRetry and visible(hudRetry) then
-            local body = hudRetry:FindFirstChild("Body")
-            if body and visible(body) then return body end
-            return hudRetry
+        local map = hud and hud:FindFirstChild("Map")
+        local waves = map and map:FindFirstChild("WavesAmount")
+        return waves ~= nil and visible(waves)
+    end
+
+    -- [RAW getEndButtons: Ưu tiên HUD.EndFrame, fallback EndScreen.Holder.Buttons]
+    local function findButtonInContainer(container, name)
+        if not container then return nil end
+        local item = container:FindFirstChild(name)
+        if not item then return nil end
+
+        -- 1. Nếu chính nó là GuiButton đang hiển thị
+        if item:IsA("GuiButton") and visible(item) then
+            return item
+        end
+        -- 2. Button con (VERIFIED: EndScreen.Holder.Buttons.Retry.Button là TextButton)
+        local btn = item:FindFirstChild("Button")
+        if btn and btn:IsA("GuiButton") and visible(btn) then
+            return btn
+        end
+        -- 3. Body con (CANDIDATE: HUD.EndFrame.Retry.Body / Leave.Body)
+        local body = item:FindFirstChild("Body")
+        if body and visible(body) then
+            return body
+        end
+        -- 4. Bất kỳ GuiButton con nào
+        local anyBtn = item:FindFirstChildWhichIsA("GuiButton", true)
+        if anyBtn and visible(anyBtn) then
+            return anyBtn
+        end
+        -- 5. Fallback GuiObject nếu container visible
+        if visible(item) then
+            return item
         end
         return nil
     end
 
-    -- [R4] TÍN HIỆU CHUYỂN VỀ STAGE: chỉ là GUI CANDIDATE.
-    -- Dùng để chống việc tính một lượt Replay chỉ vì EndScreen đóng.
-    -- Không khẳng định đây là state server chính thức.
-    local function stageHintVisible()
+    local function getEndButtons()
+        -- Nhánh 1: HUD.EndFrame (ưu tiên raw)
         local hud = playerGui:FindFirstChild("HUD")
-        local stageFrame = hud and hud:FindFirstChild("StageFrame")
-        if stageFrame and visible(stageFrame) then return true end
+        local endFrame = hud and hud:FindFirstChild("EndFrame")
+        if endFrame and visible(endFrame) then
+            local retry = findButtonInContainer(endFrame, "Retry")
+            local leave = findButtonInContainer(endFrame, "Leave")
+            if retry or leave then
+                return retry, leave, "HUD.EndFrame"
+            end
+        end
 
-        local guides = playerGui:FindFirstChild("Guides")
-        local list = guides and guides:FindFirstChild("List")
-        local matchHud = list and list:FindFirstChild("MatchStatusHUD")
-        local buttons = matchHud and matchHud:FindFirstChild("Buttons")
-        local autoPlay = buttons and buttons:FindFirstChild("AutoPlay")
-        if autoPlay and visible(autoPlay) then return true end
+        -- Nhánh 2: EndScreen.Holder.Buttons (fallback raw / verified log)
+        local endScreen = playerGui:FindFirstChild("EndScreen")
+        local holder = endScreen and endScreen:FindFirstChild("Holder")
+        local buttons = holder and holder:FindFirstChild("Buttons")
+        if buttons and visible(buttons) then
+            local retry = findButtonInContainer(buttons, "Retry")
+            local leave = findButtonInContainer(buttons, "Leave")
+            if retry or leave then
+                return retry, leave, "EndScreen.Holder.Buttons"
+            end
+        end
 
-        return false
+        -- Nhánh 3: Fallback tìm trực tiếp trong EndScreen / Holder
+        if endScreen and visible(endScreen) then
+            local retry = findButtonInContainer(holder or endScreen, "Retry")
+            local leave = findButtonInContainer(holder or endScreen, "Leave")
+            if retry or leave then
+                return retry, leave, "EndScreen"
+            end
+        end
+
+        return nil, nil, nil
     end
 
-    -- [R5] ĐỌC SLIDER N; nếu giá trị chưa hợp lệ thì dùng N=20 mặc định.
+    -- [RAW click: firesignal + VirtualInputManager ở tâm nút]
+    local function isCoveredByMenu(btn)
+        if not btn or not ctx.screen or not ctx.screen.Enabled then return false end
+        local main = ctx.screen:FindFirstChild("Main") or ctx.screen:FindFirstChildWhichIsA("Frame")
+        if not main or not main.Visible then return false end
+
+        local btnPos = btn.AbsolutePosition
+        local btnSize = btn.AbsoluteSize
+        local cx = btnPos.X + (btnSize.X / 2)
+        local cy = btnPos.Y + (btnSize.Y / 2)
+
+        local mPos = main.AbsolutePosition
+        local mSize = main.AbsoluteSize
+        return (cx >= mPos.X and cx <= mPos.X + mSize.X and cy >= mPos.Y and cy <= mPos.Y + mSize.Y)
+    end
+
+    local function click(btn)
+        if not btn or not ctx.alive then return false end
+        local clicked = false
+
+        -- 1. firesignal (Activated & MouseButton1Click) theo raw
+        if type(firesignal) == "function" and btn:IsA("GuiButton") then
+            pcall(function() firesignal(btn.Activated) end)
+            pcall(function() firesignal(btn.MouseButton1Click) end)
+            clicked = true
+        end
+
+        -- 2. VirtualInputManager ở tâm nút theo raw
+        if isCoveredByMenu(btn) then
+            logOnce("covered", "Tọa độ nút bị menu LotusHub che; ưu tiên firesignal và gửi click VIM.")
+        end
+
+        local vimOk, vim = pcall(function() return game:GetService("VirtualInputManager") end)
+        if vimOk and vim then
+            pcall(function()
+                local pos = btn.AbsolutePosition
+                local size = btn.AbsoluteSize
+                local x = pos.X + (size.X / 2)
+                local y = pos.Y + (size.Y / 2)
+                vim:SendMouseButtonEvent(x, y, 0, true, game, 0)
+                task.wait(0.05)
+                vim:SendMouseButtonEvent(x, y, 0, false, game, 0)
+                clicked = true
+            end)
+        end
+
+        return clicked
+    end
+
+    -- [RAW exitToLobby: KHÔI PHỤC TOÀN BỘ CHUỖI ĐÃ ĐƯỢC TEST THÀNH CÔNG]
+    -- Thứ tự: click Leave -> wait 0.8s -> Remote MATCH_FLOW 03 -> wait 1.5s -> Teleport LOBBY_ID
+    local function exitToLobby(leaveBtn)
+        if session.lobbyRunning then return end
+        session.lobbyRunning = true
+
+        log("Bắt đầu chuỗi về Lobby đã xác minh (VERIFIED raw workflow)...")
+
+        -- Bước 1: Click Leave button nếu có
+        if leaveBtn then
+            log("Bước 1: Click Leave button (" .. tostring(leaveBtn:GetFullName()) .. ")")
+            click(leaveBtn)
+            task.wait(CONFIG.LobbyWaitAfterClick)
+        else
+            log("Bước 1: Không có GUI Leave hiển thị, chuyển thẳng sang bước Remote.")
+        end
+
+        if not ctx.alive or state.ReplayLimitEnabled ~= true then
+            session.lobbyRunning = false
+            return
+        end
+
+        -- Bước 2: AV_GAME_MATCH_FLOW_V1_BLINK_RELIABLE_REMOTE "\003"
+        local matchFlowRemote = rs:FindFirstChild(MATCH_FLOW_REMOTE_NAME)
+        if matchFlowRemote and matchFlowRemote:IsA("RemoteEvent") then
+            log("Bước 2: Gửi Remote " .. MATCH_FLOW_REMOTE_NAME .. " buffer 0x03")
+            pcall(function()
+                matchFlowRemote:FireServer(buffer.fromstring("\003"))
+            end)
+        else
+            log("Bước 2: Không tìm thấy Remote " .. MATCH_FLOW_REMOTE_NAME .. ", tiếp tục fallback Teleport.")
+        end
+
+        if not ctx.alive or state.ReplayLimitEnabled ~= true then
+            session.lobbyRunning = false
+            return
+        end
+
+        task.wait(CONFIG.LobbyWaitAfterRemote)
+
+        if not ctx.alive or state.ReplayLimitEnabled ~= true then
+            session.lobbyRunning = false
+            return
+        end
+
+        -- Bước 3: TeleportService:Teleport(16146832113, LocalPlayer)
+        local tsOk, ts = pcall(function() return game:GetService("TeleportService") end)
+        if tsOk and ts then
+            log("Bước 3: Gọi TeleportService:Teleport về Lobby (PlaceId: " .. tostring(LOBBY_ID) .. ")")
+            pcall(function()
+                ts:Teleport(LOBBY_ID, player)
+            end)
+        else
+            warn("[LotusHub Replay] Không thể khởi tạo TeleportService")
+        end
+
+        session.lobbyRunning = false
+    end
+
+    -- [RAW doRetry: Click retryBtn + gửi Remote Retry "\003"]
+    local function doRetry(retryBtn)
+        log("Thực hiện thao tác Retry (EndScreen #" .. session.count .. ", lần thử " .. session.retryAttempts .. ")...")
+
+        if retryBtn then
+            log("Click Retry button: " .. tostring(retryBtn:GetFullName()))
+            click(retryBtn)
+        else
+            log("Không có nút Retry GUI trực tiếp, chuyển sang gửi Remote Retry.")
+        end
+
+        -- Remote Retry đã capture: AV_GAME_ENDSCREEN_V1_BLINK_RELIABLE_REMOTE "\003"
+        task.wait(0.2)
+        local retryRemote = rs:FindFirstChild(RETRY_REMOTE_NAME)
+        if retryRemote and retryRemote:IsA("RemoteEvent") then
+            pcall(function()
+                retryRemote:FireServer(buffer.fromstring("\003"))
+                log("Đã gửi Remote Retry " .. RETRY_REMOTE_NAME .. " buffer 0x03")
+            end)
+        end
+    end
+
+    -- [ĐỌC SLIDER N]
     local function replayLimit()
         return math.clamp(math.floor(tonumber(state.ReplayLimit) or 20), 1, 100)
     end
 
     local function limitReached()
-        return state.ReplayLimitEnabled == true
-            and session.count >= replayLimit()
+        return state.ReplayLimitEnabled == true and session.count >= replayLimit()
     end
 
-    -- [R6] DỮ LIỆU LOBBY TỪ RAW: chỉ có GUI Leave là đường tương tác ứng viên.
-    -- KHÔNG gửi AV_GAME_MATCH_FLOW buffer 03 / TeleportService (chưa xác minh).
-    local function getLeaveButton()
-        -- CANDIDATE #1 từ raw: EndScreen.Holder.Buttons.Leave.
-        local endScreen = playerGui:FindFirstChild("EndScreen")
-        local holder = endScreen and endScreen:FindFirstChild("Holder")
-        local buttons = holder and holder:FindFirstChild("Buttons")
-        local leaveRoot = buttons and buttons:FindFirstChild("Leave")
-
-        -- CANDIDATE #2 từ raw: HUD.EndFrame.Leave.Body.
-        if not leaveRoot or not visible(leaveRoot) then
-            local hud = playerGui:FindFirstChild("HUD")
-            local endFrame = hud and hud:FindFirstChild("EndFrame")
-            local hudLeave = endFrame and endFrame:FindFirstChild("Leave")
-            if endFrame and visible(endFrame) and hudLeave and visible(hudLeave) then
-                leaveRoot = hudLeave
-            else
-                return nil
-            end
-        end
-
-        -- Ưu tiên GuiButton thực nếu có; fallback Frame đúng path từ raw.
-        if leaveRoot:IsA("GuiButton") then return leaveRoot end
-        local button = leaveRoot:FindFirstChild("Button")
-        if button and button:IsA("GuiButton") then
-            -- Button tồn tại nhưng không hiển thị => chưa được phép tương tác.
-            return visible(button) and button or nil
-        end
-        button = leaveRoot:FindFirstChildWhichIsA("GuiButton", true)
-        if button and visible(button) then return button end
-        local body = leaveRoot:FindFirstChild("Body")
-        if body and visible(body) then return body end
-        return leaveRoot -- Frame ứng viên, click tại tâm như raw.
-    end
-
-    -- Bấm đúng GuiObject nằm dưới Leave của một EndScreen hiển thị.
-    -- Chỉ một click (không gọi đồng thời firesignal + VIM để tránh double).
-    local function clickLeave(button)
-        if not ctx.alive or not button or not visible(button) then
-            return false, "Nút Leave không còn hiển thị"
-        end
-        local okService, service = pcall(function()
-            return game:GetService("VirtualInputManager")
-        end)
-        if not okService or not service then
-            return false, "Executor không cho truy cập VirtualInputManager"
-        end
-        vim = service
-        local center = button.AbsolutePosition + (button.AbsoluteSize / 2)
-        local ok, err = pcall(function()
-            vim:SendMouseButtonEvent(center.X, center.Y, 0, true, game, 1)
-            task.wait(0.06)
-            -- Luôn thả chuột kể cả khi ui/toggle đã tắt giữa thao tác.
-            vim:SendMouseButtonEvent(center.X, center.Y, 0, false, game, 1)
-        end)
-        return ok, err
-    end
-
-    -- Đã đủ N: KHÔNG ngắt Stage đang chạy; chỉ thử Leave lúc EndScreen hiện.
-    local function tryLobby(endVisible)
-        if not ctx.alive or not limitReached() or not endVisible then return end
-        if session.lobbyRequested then return end
-
-        local fn = session.lobbyHandler
-        if type(fn) == "function" then
-            session.lobbyRequested = true
-            session.lobbyPendingAt = os.clock()
-            local ok, sent = pcall(fn, {
-                count = session.count,
-                limit = replayLimit(),
-                reason = "ReplayLimit",
-            })
-            if not ok then
-                warn("[LotusHub Replay] Lỗi Lobby handler: " .. tostring(sent))
-            else
-                log("Đã gọi Lobby handler (ACK kết quả: " .. tostring(sent)
-                    .. "). Chưa xác nhận đã về Lobby.")
-            end
-            return
-        end
-
-        local leave = getLeaveButton()
-        if not leave then
-            logOnce("leaveMissing", "CANDIDATE Leave GUI chưa có/không hiển thị."
-                .. " Đạt " .. session.count .. "/" .. replayLimit()
-                .. "; đã dừng Retry, không tự gọi Remote/PlaceId chưa kiểm chứng.")
-            return
-        end
-
-        -- Chặn thử lặp sau lần nhấn đầu tiên; không teleport liên tục.
-        -- Nếu menu LotusHub đang che nút Leave trên màn hình, cần thu nhỏ
-        -- menu để VirtualInputManager click tới đúng GUI của game.
-        session.lobbyRequested = true
-        session.lobbyPendingAt = os.clock()
-        local ok, err = clickLeave(leave)
-        if ok then
-            log("Đã THỬ nhấn Leave qua VirtualInputManager; chờ xác minh Lobby."
-                .. " (CANDIDATE GUI, chưa phải ACK server)")
-        else
-            warn("[LotusHub Replay] Không thể nhấn Leave: " .. tostring(err))
-            -- Không đổi sang Remote hoặc PlaceId mù.
-        end
-    end
-
-    -- [R6.1] ĐẨY SỐ ĐẾM VÀ TRẠNG THÁI VỀ UI GAMEPLAY, KHÔNG TẠO MENU RIÊNG.
+    -- [CẬP NHẬT TIẾN ĐỘ VỀ UI GAMEPLAY]
     local function updateProgress()
         local status = string.format("%d/%d/%s/%s", session.count, replayLimit(),
-            tostring(state.ReplayLimitEnabled), tostring(session.lobbyRequested))
+            tostring(state.ReplayLimitEnabled), tostring(session.lobbyTriggered))
         if session.lastStatus == status then return end
         session.lastStatus = status
+
         if type(ctx.replayProgressSink) == "function" then
             ctx.replayProgressSink(session.count, replayLimit(),
                 limitReached() and "Chờ kết thúc để về Lobby" or nil)
         end
     end
 
-    local function clearPending()
-        session.awaitingHide = false
-        session.confirming = false
-        session.hiddenSince = nil
-        session.confirmDeadline = nil
-        session.matchStartedAfterRetry = false
-    end
-
-    -- [R7] THỬ GỬI REMOTE RETRY: có chống gửi trùng, không coi FireServer = thành công.
-    local function sendRetry(now)
-        if not ctx.alive or state.AutoReplay ~= true or limitReached() then return end
-        local remote = rs:FindFirstChild(RETRY_REMOTE)
-        if not remote or not remote:IsA("RemoteEvent") then
-            logOnce("remoteMissing", "MISSING Remote Retry: " .. RETRY_REMOTE)
-            return
-        end
-
-        -- Chốt số lần trước khi gửi để hạn chế burst nếu có lỗi.
-        session.attempts += 1
-        session.lastAttemptAt = now
-        session.awaitingHide = true
-        session.matchStartedAfterRetry = false
-
-        local ok, err = pcall(function()
-            remote:FireServer(buffer.fromstring("\003"))
-        end)
-        if ok then
-            log("Đã gửi Retry 03 (EndScreen #" .. session.endScreenId
-                .. ", thử " .. session.attempts .. "/"
-                .. CONFIG.MaxAttemptsPerEndScreen .. "). Chờ chuyển trạng thái...")
-        else
-            session.awaitingHide = false
-            warn("[LotusHub Replay] LỖI FireServer Retry: " .. tostring(err))
-        end
-    end
-
-    local function onNewEndScreen()
-        session.endScreenId += 1
-        session.attempts = 0
-        session.lastAttemptAt = nil
-        clearPending()
-        log("Đã thấy GUI Retry ở EndScreen #" .. session.endScreenId)
-    end
-
-    -- [R8] XÁC MINH: chỉ tăng số đếm khi chính LotusHub gửi Retry,
-    -- EndScreen biến mất, và nhận được GUI Stage hoặc Match Started! sau đó.
-    local function confirmReplay()
-        session.count += 1
-        log("Replay đã quan sát: " .. session.count .. "/" .. replayLimit()
-            .. " (EndScreen ẩn + tín hiệu Stage; chưa phải ACK server Retry)")
-        clearPending()
-        if limitReached() then
-            log("Đã đạt N Replay; chờ EndScreen kế tiếp để thử Leave, không ngắt trận giữa chừng.")
-        end
-        updateProgress()
-    end
-
-    -- [R9] 1 TICK: xử lý sự xuất hiện/biến mất của Retry.
+    -- [VÒNG LẶP XỬ LÝ TICK THEO ĐÚNG NGUYÊN BẢN RAW]
     local function tick()
         if not ctx.alive or session.tickRunning then return end
         session.tickRunning = true
+
         local ok, err = pcall(function()
             local now = os.clock()
-            local button = getRetryButton()
-            local leave = getLeaveButton()
-            local endVisible = (button ~= nil and visible(button))
-                or (leave ~= nil and visible(leave))
+            local retryBtn, leaveBtn, source = getEndButtons()
+            local isEndVisible = (retryBtn ~= nil) or (leaveBtn ~= nil)
 
-            -- Phát hiện cửa sổ kết thúc mới.
-            if endVisible and not session.wasVisible then
-                if session.confirming then
-                    log("EndScreen trở lại trước khi xác nhận Replay. Không cộng số đếm.")
+            -- 1. Xử lý khi EndScreen biến mất (đã chuyển Stage hoặc chuyển Place)
+            if not isEndVisible then
+                if session.endScreenActive then
+                    session.endScreenActive = false
+                    session.handledThisEndScreen = false
+                    session.retryAttempts = 0
+                    session.lastRetryAt = nil
+                    session.lobbyTriggered = false
+                    log("EndScreen đã biến mất; đặt lại trạng thái sẵn sàng cho trận tiếp theo.")
                 end
-                onNewEndScreen()
+                updateProgress()
+                return
             end
 
-            -- Một lần Retry có vẻ đã được nhận: EndScreen đóng sau khi gửi.
-            if not endVisible and session.wasVisible and session.awaitingHide then
-                session.awaitingHide = false
-                session.confirming = true
-                session.hiddenSince = now
-                session.confirmDeadline = now + CONFIG.TransitionTimeout
-                log("EndScreen đã ẩn sau lệnh Retry; đang đợi dấu hiệu Stage...")
+            -- 2. Xử lý khi phát hiện EndScreen mới
+            if not session.endScreenActive then
+                session.endScreenActive = true
+                session.handledThisEndScreen = false
+                session.retryAttempts = 0
+                session.lastRetryAt = nil
+                session.lobbyTriggered = false
+                log("Phát hiện màn hình kết thúc trận tại: " .. tostring(source))
             end
 
-            session.wasVisible = endVisible
+            -- 3. XỬ LÝ MỘT LẦN CHO MỖI ENDSCREEN (BẢO VỆ CHỐNG ĐẾM TRÙNG & SPAM)
+            if not session.handledThisEndScreen then
+                local returnAtN = (state.ReplayLimitEnabled == true)
+                local autoReplay = (state.AutoReplay == true)
 
-            if session.confirming and not endVisible then
-                local stable = session.hiddenSince
-                    and (now - session.hiddenSince >= CONFIG.TransitionStable)
-                local foundStage = session.matchStartedAfterRetry
-                    or (CONFIG.StageChecksEnabled and stageHintVisible())
-                if stable and foundStage then
-                    confirmReplay()
-                elseif now >= session.confirmDeadline then
-                    log("Không xác minh được Stage mới sau Retry; KHÔNG cộng số đếm.")
-                    clearPending()
+                -- Nếu cả 2 toggle đều tắt, không đếm và không thao tác
+                if not returnAtN and not autoReplay then
+                    logOnce("bothOff", "EndScreen hiển thị nhưng AutoReplay và ReplayLimit đều OFF. Chờ người dùng.")
+                    updateProgress()
+                    return
                 end
-            end
 
-            -- Slider/limit có thể đổi bất cứ lúc nào; kiểm tra mỗi tick.
-            updateProgress()
-            if limitReached() then
-                -- Không về Lobby khi vẫn đang chơi Stage: chỉ ở EndScreen.
-                tryLobby(endVisible)
-                if session.lobbyRequested and session.lobbyPendingAt
-                    and endVisible and now - session.lobbyPendingAt > 9 then
-                    logOnce("leaveUnconfirmed", "Đã thử Leave nhưng EndScreen vẫn hiện sau 9 giây."
-                        .. " Hãy kiểm tra lại GUI/VirtualInput; không gửi lần thứ hai.")
+                -- Tăng bộ đếm theo đúng ngữ nghĩa raw (Config.Current += 1)
+                session.count += 1
+                session.handledThisEndScreen = true
+                updateProgress()
+
+                local targetN = replayLimit()
+                log("EndScreen #" .. session.count .. " (Mốc N=" .. targetN .. ", ReturnAtN=" .. tostring(returnAtN) .. ", AutoReplay=" .. tostring(autoReplay) .. ")")
+
+                -- Nhánh quyết định của raw:
+                -- if ReturnAtN and Current >= TargetN then exitToLobby(...) elseif AutoReplay then click(retryBtn)
+                if returnAtN and session.count >= targetN then
+                    log("ĐÃ ĐẠT MỐC N (" .. session.count .. " >= " .. targetN .. "). Kích hoạt chuỗi về Lobby ngay tại EndScreen này!")
+                    session.lobbyTriggered = true
+
+                    -- Nếu có Custom Lobby Handler do user đăng ký, ưu tiên gọi
+                    if type(session.lobbyHandler) == "function" then
+                        log("Gọi Custom Lobby Handler...")
+                        pcall(session.lobbyHandler, {
+                            count = session.count,
+                            limit = targetN,
+                            reason = "ReplayLimit",
+                        })
+                    else
+                        task.spawn(function()
+                            exitToLobby(leaveBtn)
+                        end)
+                    end
+                elseif autoReplay then
+                    log("Chưa đạt mốc N hoặc ReplayLimit OFF. Kích hoạt Retry...")
+                    session.retryAttempts += 1
+                    session.lastRetryAt = now
+                    task.spawn(function()
+                        doRetry(retryBtn)
+                    end)
+                else
+                    -- Case D: ReplayLimitEnabled=ON, AutoReplay=OFF, nhưng count < targetN
+                    log("ReplayLimitEnabled=ON nhưng AutoReplay=OFF và chưa đạt mốc N (" .. session.count .. " < " .. targetN .. "). Giữ nguyên trạng thái, không Retry.")
                 end
                 return
             end
 
-            if not endVisible or not button or state.AutoReplay ~= true then return end
-
-            -- Đang chờ Retry được xử lý: không gửi liên tiếp trong mỗi tick.
-            if session.awaitingHide then
-                if now - session.lastAttemptAt < CONFIG.RetryCooldown then
-                    return
+            -- 4. EndScreen vẫn đang hiển thị sau khi đã xử lý (Case E: đứng yên >10s)
+            -- Không bao giờ đếm lại hay gọi Teleport lại!
+            if state.AutoReplay == true and not limitReached() then
+                -- Nếu Retry chưa làm ẩn EndScreen, cho phép thử lại tối đa MaxRetryAttempts lần sau cooldown
+                if session.retryAttempts < CONFIG.MaxRetryAttempts then
+                    if session.lastRetryAt and (now - session.lastRetryAt >= CONFIG.RetryCooldown) then
+                        session.retryAttempts += 1
+                        session.lastRetryAt = now
+                        log("EndScreen vẫn hiện sau " .. CONFIG.RetryCooldown .. "s. Thử lại Retry lần " .. session.retryAttempts .. "/" .. CONFIG.MaxRetryAttempts .. "...")
+                        task.spawn(function()
+                            doRetry(retryBtn)
+                        end)
+                    end
+                else
+                    logOnce("retryMaxed", "Đã thử Retry tối đa " .. session.retryAttempts .. " lần ở EndScreen này. Dừng retry để tránh spam.")
                 end
-                if session.attempts >= CONFIG.MaxAttemptsPerEndScreen then
-                    logOnce("max:" .. session.endScreenId,
-                        "Đã thử Retry tối đa " .. session.attempts
-                            .. " lần ở EndScreen hiện tại; chờ người dùng kiểm tra.")
-                    return
-                end
+            elseif limitReached() then
+                logOnce("lobbyWaiting", "Đã gửi lệnh về Lobby cho EndScreen hiện tại; không gửi lặp lại.")
             end
 
-            if session.attempts == 0
-                or (session.lastAttemptAt
-                    and now - session.lastAttemptAt >= CONFIG.RetryCooldown
-                    and session.attempts < CONFIG.MaxAttemptsPerEndScreen) then
-                sendRetry(now)
-            end
+            updateProgress()
         end)
+
         session.tickRunning = false
         if not ok then
             warn("[LotusHub Replay] LỖI tick: " .. tostring(err))
         end
     end
 
-    -- [R10] LẮNG NGHE THÔNG BÁO MATCH STARTED! SAU RETRY.
-    -- Nhận thật qua OnClientEvent, không dùng firesignal mô phỏng.
-    local notification = rs:FindFirstChild(NOTIFICATION_REMOTE)
-    if notification and notification:IsA("RemoteEvent") then
-        ctx:Connect(notification.OnClientEvent, function(payload)
-            if not ctx.alive or typeof(payload) ~= "buffer" then return end
-            if not (session.awaitingHide or session.confirming) then return end
-            local ok, raw = pcall(buffer.tostring, payload)
-            if ok and type(raw) == "string"
-                and raw:find(MATCH_STARTED_TEXT, 1, true) then
-                session.matchStartedAfterRetry = true
-            end
-        end)
-    else
-        logOnce("notification", "MISSING Notification Remote; chỉ dựa vào GUI Stage candidate")
-    end
-
-    -- [R11] HAI TOGGLE ĐỘC LẬP.
-    -- AutoReplay OFF: dừng gửi và hủy lượt đang chờ.
-    -- ReplayLimitEnabled OFF: ngừng giới hạn/teleport nhưng không tự tắt AutoReplay.
+    -- [XỬ LÝ SỰ KIỆN TOGGLE]
     ui:SetToggleHandler("AutoReplay", function(enabled)
         log("AutoReplay = " .. tostring(enabled))
-        clearPending()
         if enabled then
-            -- Không reset số đếm khi OFF/ON. Chỉ reset bằng nút Reset.
-            session.attempts = 0
-            session.lastAttemptAt = nil
             task.defer(tick)
         end
         updateProgress()
     end)
 
     ui:SetToggleHandler("ReplayLimitEnabled", function(enabled)
-        log("ReplayLimitEnabled = " .. tostring(enabled)
-            .. " | N=" .. replayLimit())
-        if not enabled then
-            -- OFF chỉ hủy phần giới hạn / yêu cầu về Lobby.
-            session.lobbyRequested = false
-            session.lobbyPendingAt = nil
-            session.logs.leaveMissing = nil
-            session.logs.leaveUnconfirmed = nil
-        else
+        log("ReplayLimitEnabled = " .. tostring(enabled) .. " | N=" .. replayLimit())
+        if enabled then
             task.defer(tick)
         end
         updateProgress()
     end)
 
-    -- [R12] API để nối Lobby handler riêng nếu sau này có bằng chứng tốt hơn.
+    -- [API BỘ ĐẾM & TRẠNG THÁI]
     function ui:SetReplayLobbyHandler(fn)
-        assert(type(fn) == "function", "SetReplayLobbyHandler expects function")
+        assert(type(fn) == "function", "SetReplayLobbyHandler yêu cầu function")
         session.lobbyHandler = fn
-        session.logs.leaveMissing = nil
         task.defer(tick)
     end
 
@@ -468,31 +467,32 @@ function Replay.Init(ctx, ui)
             limit = replayLimit(),
             autoReplay = state.AutoReplay == true,
             returnToLobby = state.ReplayLimitEnabled == true,
-            lobbyIntegrated = type(session.lobbyHandler) == "function" or getLeaveButton() ~= nil,
-            pending = session.awaitingHide or session.confirming,
+            lobbyIntegrated = true,
+            pending = session.endScreenActive,
             waitingForLobby = limitReached(),
-            lobbyRequested = session.lobbyRequested,
+            lobbyRequested = session.lobbyTriggered,
         }
     end
 
     function ui:ResetReplayCount()
-        -- Khi Reset giữa lúc chuyển trận, không cộng lại từ phiên cũ.
-        clearPending()
         session.count = 0
-        session.lobbyRequested = false
-        session.lobbyPendingAt = nil
-        session.logs.leaveMissing = nil
-        session.logs.leaveUnconfirmed = nil
-        log("Đã reset số đếm Replay về 0 theo yêu cầu API")
+        session.endScreenActive = false
+        session.handledThisEndScreen = false
+        session.retryAttempts = 0
+        session.lastRetryAt = nil
+        session.lobbyTriggered = false
+        session.logs = {}
+        log("Đã reset số đếm Replay về 0 theo yêu cầu")
         updateProgress()
     end
 
-    -- [R13] CHỈ MỘT WORKER. Khi đóng UI, ctx.alive=false -> tự ngừng.
+    -- [KHỞI TẠO DUY NHẤT 1 WORKER]
     task.spawn(function()
         while ctx.alive do
             tick()
             task.wait(CONFIG.PollInterval)
         end
+        log("Worker Replay đã dừng do ctx.alive = false.")
     end)
 end
 
