@@ -1880,4 +1880,4 @@ if not ok then
     error("[LotusHub] Khởi động thất bại: " .. tostring(err))
 end
 
-print("[LotusHub] Đã nạp Menu + Gameplay + Match V3 + Replay + BoostPerformance (Đã fix hoàn toàn lỗi bounce).")
+print("[LotusHub] Đã nạp sexgay + Gameplay + Match V3 + Replay + BoostPerformance (Đã fix hoàn toàn lỗi bounce).")
