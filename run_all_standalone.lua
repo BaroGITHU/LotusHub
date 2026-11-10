@@ -445,6 +445,8 @@ function Menu.Create(ctx)
         CanvasSize = UDim2.new(0, 0, 0, 0),
         ScrollingDirection = Enum.ScrollingDirection.Y,
         VerticalScrollBarInset = Enum.ScrollBarInset.None,
+        -- TẮT HIỆU ỨNG NẢY (overscroll bounce) khi cuộn tới đầu/cuối danh sách.
+        ElasticBehavior = Enum.ElasticBehavior.Never,
         Active = true,
         Selectable = false,
     })
