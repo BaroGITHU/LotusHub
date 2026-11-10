@@ -391,65 +391,9 @@ function Menu.Create(ctx)
             end
         end
 
-        connect(container.MouseEnter, function()
-            if leaveConn then
-                leaveConn:Disconnect()
-                leaveConn = nil
-            end
-            if isHovered then return end
-            isHovered = true
-            hoveredTopButtons[name] = true
-            isHoveringTopButtons = true
-
-            -- Chống xung đột giữa 2 nút: nếu nút kia đang hover, giải phóng ngay lập tức
-            for otherName, otherBtn in pairs(topButtons) do
-                if otherName ~= name and otherBtn.isHovered() then
-                    otherBtn.finishLeave()
-                end
-            end
-
-            local beforeSnaps = nil
-            if DEBUG_BUTTON_COORDS then
-                beforeSnaps = captureAllSnapshots()
-            end
-
-            -- CHỈ TWEEN VisualBox và TextLabel. Tuyệt đối KHÔNG tween Container!
-            pcall(function()
-                TweenService:Create(visualBox, tweenInfoFast, {
-                    Size = BOX_HOVER_SIZE,
-                    BackgroundColor3 = hoverBg,
-                }):Play()
-                TweenService:Create(textLabel, tweenInfoFast, {
-                    TextSize = TEXT_HOVER_SIZE,
-                    TextColor3 = C.white,
-                }):Play()
-            end)
-
-            if DEBUG_BUTTON_COORDS then
-                task.delay(0.16, function()
-                    verifySnapshots("MouseEnter:Completed", name, beforeSnaps)
-                end)
-            end
-        end)
-
-        connect(container.MouseLeave, function()
-            if not isHovered then return end
-            -- Kiểm tra xem chuột có đang nằm trong phần đệm mở rộng 4px của VisualBox hay không
-            if isPointerWithinVisualBox() then
-                -- Giữ nguyên trạng thái hover cho đến khi con trỏ chuột thực sự rời khỏi VisualBox
-                if leaveConn then leaveConn:Disconnect() end
-                leaveConn = UserInputService.InputChanged:Connect(function(input)
-                    if input.UserInputType == Enum.UserInputType.MouseMovement
-                        or input.UserInputType == Enum.UserInputType.Touch then
-                        if not isPointerWithinVisualBox() then
-                            finishLeave()
-                        end
-                    end
-                end)
-            else
-                finishLeave()
-            end
-        end)
+        -- [ĐÃ TẮT HIỆU ỨNG HOVER] Nút − và × giờ là dạng TĨNH:
+        -- không phóng to, không đổi màu khi rê chuột => hitbox cố định, dễ bấm.
+        -- (Đã bỏ MouseEnter/MouseLeave + Tween. Click vẫn hoạt động bình thường.)
 
         -- Đăng ký dọn dẹp kết nối an toàn khi UI bị destroy
         table.insert(ctx.connections, {
