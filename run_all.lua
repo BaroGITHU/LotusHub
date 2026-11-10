@@ -25,6 +25,7 @@ local MODULE_PATHS = {
     Gameplay = "modules/Gameplay.lua",
     Match = "modules/Gameplay/Match.lua",
     Replay = "modules/Gameplay/Replay.lua",
+    BoostPerformance = "modules/Gameplay/BoostPerformance.lua",
 }
 
 -- [IMPORT] Nếu executor lưu file trong thư mục workspace/LotusHub,
@@ -61,6 +62,7 @@ local Menu = loadModule(MODULE_PATHS.Menu)
 local Gameplay = loadModule(MODULE_PATHS.Gameplay)
 local Match = loadModule(MODULE_PATHS.Match)
 local Replay = loadModule(MODULE_PATHS.Replay)
+local BoostPerformance = loadModule(MODULE_PATHS.BoostPerformance)
 
 -- [START] Chỉ khi import xong mới dọn phiên cũ, tránh trùng worker/GUI.
 if type(env.LotusHubUI) == "table" and type(env.LotusHubUI.Destroy) == "function" then
@@ -109,6 +111,7 @@ local ok, err = pcall(function()
     Gameplay.Init(ctx, ui)
     Match.Init(ctx, ui)
     Replay.Init(ctx, ui)
+    BoostPerformance.Init(ctx, ui)
     env.LotusHubUI = ui -- API tương thích bản cũ.
     ui:ShowTab("Gameplay")
 end)
@@ -118,4 +121,4 @@ if not ok then
     error("[LotusHub] Khởi động thất bại: " .. tostring(err))
 end
 
-print("[LotusHub Modular] Đã nạp Menu + Gameplay + Match V3 + Replay. Các tính năng khác chỉ là UI.")
+print("[LotusHub Modular] Đã nạp Menu + Gameplay + Match V3 + Replay + BoostPerformance.")

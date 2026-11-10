@@ -12,7 +12,11 @@ local Menu = {}
 
 function Menu.Create(ctx)
     local UserInputService = game:GetService("UserInputService")
+    local ContextActionService = game:GetService("ContextActionService")
+    local TweenService = game:GetService("TweenService")
+    local Players = game:GetService("Players")
     local Workspace = game:GetService("Workspace")
+    local localPlayer = Players.LocalPlayer
     local playerGui = ctx.playerGui
     local env = ctx.env
     local state = ctx.state
@@ -119,6 +123,7 @@ function Menu.Create(ctx)
         BackgroundColor3 = C.panel,
         BackgroundTransparency = 0.17,
         ClipsDescendants = true,
+        Active = true,
     }), 12)
     stroke(main, 0.48)
 
@@ -164,22 +169,77 @@ function Menu.Create(ctx)
         BorderSizePixel = 0,
     })
 
-    local function topButton(text, x)
-        return new("TextButton", header, {
-            Size = UDim2.fromOffset(38, 38),
-            Position = UDim2.new(1, x, 0, 10),
-            BackgroundTransparency = 1,
+    -- [I.0] HỘP CHỨA NÚT DẤU TRỪ (−) VÀ DẤU NHÂN (×)
+    -- Thiết kế dạng hộp (boxed frame) bo góc, viền hộp rõ ràng, kích thước to hơn 1.5 lần.
+    -- Khi rê chuột vào (MouseEnter): phóng to mượt mà 1.2 lần từ tâm AnchorPoint(0.5, 0.5),
+    -- TUYỆT ĐỐI CỐ ĐỊNH TÂM, KHÔNG BỊ CO GIẬT HAY DỊCH SANG TRÁI.
+    local tweenInfoFast = TweenInfo.new(0.15, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+    local isHoveringTopButtons = false
+
+    local function createTopBoxButton(name, text, xCenterOffset, isClose)
+        -- Hộp bao quanh kiểu khung hộp (box frame)
+        local box = corner(new("TextButton", header, {
+            Name = name,
+            Size = UDim2.fromOffset(42, 34),
+            AnchorPoint = Vector2.new(0.5, 0.5),
+            Position = UDim2.new(1, xCenterOffset, 0.5, 0),
+            BackgroundColor3 = Color3.fromRGB(38, 41, 46),
+            BackgroundTransparency = 0.25,
+            BorderSizePixel = 0,
+            AutoButtonColor = false,
+            Active = true,
+            Selectable = false,
+            Text = "",
+            ClipsDescendants = false,
+        }), 6)
+
+        -- Viền hộp kim loại bạc tinh tế
+        stroke(box, 0.45)
+
+        -- UIScale bên trong giúp phóng to 1.2 lần từ tâm, loại bỏ hoàn toàn hiện tượng lệch trái
+        local boxScale = new("UIScale", box, {
+            Scale = 1.0,
+        })
+
+        -- Ký tự to hơn 1.5 lần so với ban đầu
+        local textLabel = label(box, text, {
+            Position = UDim2.fromOffset(0, 0),
+            Size = UDim2.fromScale(1, 1),
             Text = text,
             TextColor3 = C.silver,
             TextSize = 26,
-            Font = Enum.Font.Gotham,
-            AutoButtonColor = false,
+            Font = Enum.Font.GothamBold,
+            TextXAlignment = Enum.TextXAlignment.Center,
+            TextYAlignment = Enum.TextYAlignment.Center,
         })
+
+        local defaultBg = Color3.fromRGB(38, 41, 46)
+        local hoverBg = isClose and Color3.fromRGB(190, 50, 50) or Color3.fromRGB(60, 65, 75)
+
+        connect(box.MouseEnter, function()
+            isHoveringTopButtons = true
+            pcall(function()
+                TweenService:Create(boxScale, tweenInfoFast, { Scale = 1.2 }):Play()
+                TweenService:Create(box, tweenInfoFast, { BackgroundColor3 = hoverBg }):Play()
+                TweenService:Create(textLabel, tweenInfoFast, { TextColor3 = C.white }):Play()
+            end)
+        end)
+
+        connect(box.MouseLeave, function()
+            isHoveringTopButtons = false
+            pcall(function()
+                TweenService:Create(boxScale, tweenInfoFast, { Scale = 1.0 }):Play()
+                TweenService:Create(box, tweenInfoFast, { BackgroundColor3 = defaultBg }):Play()
+                TweenService:Create(textLabel, tweenInfoFast, { TextColor3 = C.silver }):Play()
+            end)
+        end)
+
+        return box
     end
 
-    -- Hai nút ở góc phải: dấu trừ thu nhỏ và dấu nhân đóng cửa sổ.
-    local minimizeButton = topButton("−", -86)
-    local closeButton = topButton("×", -46)
+    -- Hai nút ở góc phải: dấu trừ thu nhỏ và dấu nhân đóng cửa sổ dạng hộp nổi bật
+    local minimizeButton = createTopBoxButton("MinimizeButton", "−", -84, false)
+    local closeButton = createTopBoxButton("CloseButton", "×", -34, true)
 
 
     -- [I.1] NÚT TRÒN KHI THU NHỎ MENU
@@ -207,7 +267,9 @@ function Menu.Create(ctx)
         Font = Enum.Font.GothamBold,
 
         BorderSizePixel = 0,
-        AutoButtonColor = true,
+        AutoButtonColor = false,
+        Active = true,
+        Selectable = false,
 
         -- Ban đầu ẩn vì menu đang mở
         Visible = false,
@@ -231,12 +293,14 @@ function Menu.Create(ctx)
         Position = UDim2.fromOffset(0, 66),
         Size = UDim2.new(1, 0, 1, -66),
         BackgroundTransparency = 1,
+        Active = true,
     })
 
     local sidebar = new("Frame", body, {
         Position = UDim2.fromOffset(18, 23),
         Size = UDim2.fromOffset(224, 442),
         BackgroundTransparency = 1,
+        Active = true,
     })
     vertical(sidebar, 11)
 
@@ -266,8 +330,11 @@ function Menu.Create(ctx)
         ScrollBarThickness = 3,
         ScrollBarImageColor3 = C.muted,
         AutomaticCanvasSize = Enum.AutomaticSize.Y,
-        CanvasSize = UDim2.new(),
+        CanvasSize = UDim2.new(0, 0, 0, 0),
         ScrollingDirection = Enum.ScrollingDirection.Y,
+        VerticalScrollBarInset = Enum.ScrollBarInset.None,
+        Active = true,
+        Selectable = false,
     })
     vertical(scroll, 11)
     new("UIPadding", scroll, {
@@ -308,6 +375,8 @@ function Menu.Create(ctx)
             Font = Enum.Font.GothamSemibold,
             AutoButtonColor = false,
             BorderSizePixel = 0,
+            Active = true,
+            Selectable = false,
         }), 7)
         local stripe = new("Frame", button, {
             Name = "Stripe",
@@ -345,7 +414,7 @@ function Menu.Create(ctx)
         local wrapper = new("Frame", parent, {
             Name = "Section_" .. key,
             LayoutOrder = #parent:GetChildren(),
-            Size = UDim2.new(1, -1, 0, 0),
+            Size = UDim2.new(1, 0, 0, 0),
             AutomaticSize = Enum.AutomaticSize.Y,
             BackgroundTransparency = 1,
         })
@@ -359,6 +428,8 @@ function Menu.Create(ctx)
             Text = "",
             AutoButtonColor = false,
             BorderSizePixel = 0,
+            Active = true,
+            Selectable = false,
         }), 9)
         label(button, displayName, {
             Position = UDim2.fromOffset(17, 0),
@@ -380,10 +451,11 @@ function Menu.Create(ctx)
             AutomaticSize = Enum.AutomaticSize.Y,
             BackgroundTransparency = 1,
         })
-        vertical(contents, 6)
+        local contentsLayout = vertical(contents, 6)
+        contentsLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
         new("UIPadding", contents, {
             PaddingLeft = UDim.new(0, 12),
-            PaddingRight = UDim.new(0, 8),
+            PaddingRight = UDim.new(0, 12),
         })
 
         local function update()
@@ -409,6 +481,8 @@ function Menu.Create(ctx)
             BackgroundColor3 = C.row,
             BackgroundTransparency = 0.26,
             BorderSizePixel = 0,
+            Active = true,
+            ClipsDescendants = false,
         }), 8)
     end
 
@@ -431,6 +505,8 @@ function Menu.Create(ctx)
             BorderSizePixel = 0,
             Text = "",
             AutoButtonColor = false,
+            Active = true,
+            Selectable = false,
         }), 9)
         stroke(track, 0.33)
         local knob = corner(new("Frame", track, {
@@ -540,6 +616,8 @@ function Menu.Create(ctx)
             Text = "",
             AutoButtonColor = false,
             ZIndex = 4,
+            Active = true,
+            Selectable = false,
         })
         hitbox.InputBegan:Connect(function(input)
             if input.UserInputType == Enum.UserInputType.MouseButton1
@@ -775,60 +853,259 @@ function Menu.Create(ctx)
 
 
 
-    -- [S] KÉO CỬA SỔ: ghi lại vị trí ban đầu khi nhấn, cập nhật theo độ dịch.
-    -- `uiScale.Scale` được tính đến để kéo đúng dù UI đã thu nhỏ trên điện thoại.
-    -- Keo cua so bang thanh tieu de (chuot / mobile touch).
+    -- [R] BẢO VỆ CHỐNG CLICK-THROUGH & DI CHUYỂN NHÂN VẬT (CLICK-TO-MOVE GUARD)
+    -- Ngăn triệt để việc click trên Menu / nút tròn làm nhân vật trong thế giới 3D di chuyển.
+    local SINK_ACTION = "LotusHub_InputSink"
+    local isHoveringMenu = false
+    local isHoveringBubble = false
+
+    local function isPosInObject(pos, obj)
+        if not (obj and obj.Visible) then return false end
+        local absPos = obj.AbsolutePosition
+        local absSize = obj.AbsoluteSize
+        return pos.X >= absPos.X and pos.X <= (absPos.X + absSize.X)
+            and pos.Y >= absPos.Y and pos.Y <= (absPos.Y + absSize.Y)
+    end
+
+    local function isInputOverUI(pos)
+        if pos and (isPosInObject(pos, main) or isPosInObject(pos, restoreBubble)) then
+            return true
+        end
+        local mouseLoc = UserInputService:GetMouseLocation()
+        if mouseLoc and (isPosInObject(mouseLoc, main) or isPosInObject(mouseLoc, restoreBubble)) then
+            return true
+        end
+        return false
+    end
+
+    local function updateSink()
+        local shouldSink = (isHoveringMenu and main.Visible) or (isHoveringBubble and restoreBubble.Visible)
+        if shouldSink then
+            pcall(function()
+                ContextActionService:BindActionAtPriority(
+                    SINK_ACTION,
+                    function()
+                        return Enum.ContextActionResult.Sink
+                    end,
+                    false,
+                    Enum.ContextActionPriority.High.Value + 3000,
+                    Enum.UserInputType.MouseButton1,
+                    Enum.UserInputType.MouseButton2,
+                    Enum.UserInputType.Touch
+                )
+            end)
+        else
+            pcall(function()
+                ContextActionService:UnbindAction(SINK_ACTION)
+            end)
+        end
+    end
+
+    connect(main.MouseEnter, function()
+        isHoveringMenu = true
+        updateSink()
+    end)
+    connect(main.MouseLeave, function()
+        isHoveringMenu = false
+        updateSink()
+    end)
+    connect(restoreBubble.MouseEnter, function()
+        isHoveringBubble = true
+        updateSink()
+    end)
+    connect(restoreBubble.MouseLeave, function()
+        isHoveringBubble = false
+        updateSink()
+    end)
+
+    connect(main:GetPropertyChangedSignal("Visible"), function()
+        if not main.Visible then isHoveringMenu = false end
+        updateSink()
+    end)
+    connect(restoreBubble:GetPropertyChangedSignal("Visible"), function()
+        if not restoreBubble.Visible then isHoveringBubble = false end
+        updateSink()
+    end)
+
+    -- Dừng ngay lập tức di chuyển của Humanoid nếu phát hiện click/tap bắt đầu trên UI
+    local function cancelHumanoidMovement()
+        local mouseLoc = UserInputService:GetMouseLocation()
+        if isInputOverUI(mouseLoc) then
+            pcall(function()
+                local char = localPlayer and localPlayer.Character
+                if char then
+                    local hum = char:FindFirstChildOfClass("Humanoid")
+                    local hrp = char:FindFirstChild("HumanoidRootPart")
+                    if hum and hrp then
+                        hum:MoveTo(hrp.Position)
+                    end
+                end
+            end)
+        end
+    end
+
+    connect(UserInputService.InputBegan, function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+            or input.UserInputType == Enum.UserInputType.Touch then
+            if isInputOverUI(input.Position) then
+                cancelHumanoidMovement()
+            end
+        end
+    end)
+
+    -- Can thiệp trực tiếp vào PlayerModule / ClickToMoveController của Roblox
+    task.spawn(function()
+        pcall(function()
+            local ps = localPlayer and localPlayer:WaitForChild("PlayerScripts", 3)
+            if not ps then return end
+            local playerModule = require(ps:WaitForChild("PlayerModule", 3))
+            local controls = nil
+            pcall(function()
+                controls = playerModule:GetControls()
+            end)
+
+            local ctm = nil
+            pcall(function()
+                if controls and type(controls.GetClickToMoveController) == "function" then
+                    ctm = controls:GetClickToMoveController()
+                elseif type(playerModule.GetClickToMoveController) == "function" then
+                    ctm = playerModule:GetClickToMoveController()
+                elseif controls and controls.clickToMoveController then
+                    ctm = controls.clickToMoveController
+                end
+            end)
+
+            if ctm and type(ctm.OnTap) == "function" and not ctm._lotusHooked then
+                ctm._lotusHooked = true
+                local originalOnTap = ctm.OnTap
+                ctm.OnTap = function(self, tapPositions, goToPoint, wasTouchTap)
+                    local mouseLoc = UserInputService:GetMouseLocation()
+                    if isInputOverUI(mouseLoc) then
+                        return -- Huỷ bỏ hoàn toàn lệnh di chuyển nếu click nằm trên Menu
+                    end
+                    return originalOnTap(self, tapPositions, goToPoint, wasTouchTap)
+                end
+            end
+        end)
+    end)
+
+    -- [S] KÉO CỬA SỔ BẰNG THANH TIÊU ĐỀ (HEADER)
+    -- Cho phép người dùng bấm giữ và kéo thanh tiêu đề để di chuyển cửa sổ LotusHub.
+    -- BẢO VỆ ĐẶC BIỆT:
+    -- 1. Nếu click/chạm bắt đầu trên nút dấu trừ (−) hoặc dấu nhân (×), KHÔNG kích hoạt kéo cửa sổ.
+    -- 2. Ngưỡng kéo (DRAG_DEADZONE = 5 pixel): chống rung/giật cửa sổ khi chỉ click chuột.
+    -- 3. Ngắt kéo chuẩn xác khi thả chuột (InputEnded) hoặc mất tiêu điểm cửa sổ (WindowFocusReleased).
     local dragging = false
     local dragTouch = nil
-    local initialInputPos
-    local initialWindowPos
+    local dragStartMousePos = nil
+    local dragStartWindowPos = nil
+    local dragMoved = false
+    local DRAG_DEADZONE = 5
+
+    local function isInsideButton(pos, btn)
+        if not (btn and btn.Visible) then return false end
+        local ap = btn.AbsolutePosition
+        local as = btn.AbsoluteSize
+        return pos.X >= ap.X and pos.X <= (ap.X + as.X)
+            and pos.Y >= ap.Y and pos.Y <= (ap.Y + as.Y)
+    end
+
     connect(header.InputBegan, function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1
             or input.UserInputType == Enum.UserInputType.Touch then
+
+            -- Nếu bấm vào nút dấu trừ hoặc dấu nhân, bỏ qua hoàn toàn kéo cửa sổ
+            if isHoveringTopButtons or isInsideButton(input.Position, closeButton) or isInsideButton(input.Position, minimizeButton) then
+                return
+            end
+
             dragging = true
+            dragMoved = false
             dragTouch = (input.UserInputType == Enum.UserInputType.Touch) and input or nil
-            initialInputPos = input.Position
-            initialWindowPos = main.Position
+            dragStartMousePos = input.Position
+            dragStartWindowPos = main.Position
         end
     end)
+
     connect(UserInputService.InputChanged, function(input)
-        if not dragging or not initialInputPos then return end
+        if not dragging or not dragStartMousePos or not dragStartWindowPos then return end
         if input.UserInputType == Enum.UserInputType.MouseMovement
             or (input.UserInputType == Enum.UserInputType.Touch and input == dragTouch) then
-            local delta = (input.Position - initialInputPos) / uiScale.Scale
+            local currentPos = input.Position
+            local deltaPix = currentPos - dragStartMousePos
+
+            -- Ngưỡng chống rung: chỉ bắt đầu dịch vị trí khi chuột đã di chuyển > 5 pixel
+            if not dragMoved then
+                if deltaPix.Magnitude >= DRAG_DEADZONE then
+                    dragMoved = true
+                else
+                    return
+                end
+            end
+
+            local scale = uiScale and uiScale.Scale or 1
+            if scale <= 0 then scale = 1 end
+            local deltaScaled = deltaPix / scale
+
             main.Position = UDim2.new(
-                initialWindowPos.X.Scale, initialWindowPos.X.Offset + delta.X,
-                initialWindowPos.Y.Scale, initialWindowPos.Y.Offset + delta.Y
+                dragStartWindowPos.X.Scale, dragStartWindowPos.X.Offset + deltaScaled.X,
+                dragStartWindowPos.Y.Scale, dragStartWindowPos.Y.Offset + deltaScaled.Y
             )
         end
     end)
+
+    local function stopDragging()
+        dragging = false
+        dragTouch = nil
+        dragStartMousePos = nil
+        dragStartWindowPos = nil
+        dragMoved = false
+    end
+
     connect(UserInputService.InputEnded, function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1
             or (input.UserInputType == Enum.UserInputType.Touch and input == dragTouch) then
-            dragging = false
-            dragTouch = nil
+            stopDragging()
         end
     end)
 
-    -- [T] TỰ ĐIỀU CHỈNH KÍCH THƯỚC THEO MÀN HÌNH
-    -- fit là hệ số co sao cho cửa sổ 940x590 vừa viewport (trừ viền 20px).
-    -- math.clamp(..., 0.35, 1): co tối đa tới 35%, không phóng lớn hơn 100%.
+    connect(UserInputService.WindowFocusReleased, stopDragging)
+
+    -- [T] TỰ ĐIỀU CHỈNH KÍCH THƯỚC THEO MÀN HÌNH (CỐ ĐỊNH, TRIỆT TIÊU CO GIẬT)
+    -- Dùng deadband 70 pixel để chặn hoàn toàn việc thanh Topbar của Roblox thụt thò khi di chuột vào góc trên
+    -- làm thay đổi Scale và gây giật/nhảy nút dấu × và −.
+    local lastViewport = nil
     local function updateScale()
-        local camera = Workspace.CurrentCamera
-        if not camera then return end
-        local viewport = camera.ViewportSize
-        local fit = math.min((viewport.X - 20) / 940, (viewport.Y - 20) / 590, 1)
+        local cam = Workspace.CurrentCamera
+        local size = (screen and screen.AbsoluteSize)
+        if not size or size.X <= 0 or size.Y <= 0 then
+            size = cam and cam.ViewportSize
+        end
+        if not size or size.X <= 0 or size.Y <= 0 then return end
+
+        if lastViewport then
+            local dx = math.abs(size.X - lastViewport.X)
+            local dy = math.abs(size.Y - lastViewport.Y)
+            -- Bỏ qua các biến động nhỏ (dưới 70px) từ Roblox Topbar show/hide khi rê chuột vào nút góc trên
+            if dx < 70 and dy < 70 then
+                return
+            end
+        end
+        lastViewport = size
+
+        local fit = math.min((size.X - 20) / 940, (size.Y - 20) / 590, 1)
         uiScale.Scale = math.clamp(fit, 0.35, 1)
     end
 
-    local cameraConnection
+    connect(screen:GetPropertyChangedSignal("AbsoluteSize"), updateScale)
+    local cameraConn = nil
     local function watchCamera()
-        if cameraConnection then
-            cameraConnection:Disconnect()
-            cameraConnection = nil
+        if cameraConn then
+            cameraConn:Disconnect()
+            cameraConn = nil
         end
         if Workspace.CurrentCamera then
-            cameraConnection = connect(Workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"), updateScale)
+            cameraConn = connect(Workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"), updateScale)
         end
         updateScale()
     end
@@ -891,6 +1168,9 @@ function Menu.Create(ctx)
     end
 
     function controller:Destroy()
+        pcall(function()
+            ContextActionService:UnbindAction(SINK_ACTION)
+        end)
         ctx:Destroy() -- Ngắt sự kiện, dừng worker và xóa cả menu + nút tròn.
     end
 
