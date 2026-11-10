@@ -171,70 +171,98 @@ function Menu.Create(ctx)
 
     -- [I.0] HỘP CHỨA NÚT DẤU TRỪ (−) VÀ DẤU NHÂN (×)
     -- Thiết kế dạng hộp (boxed frame) bo góc, viền hộp rõ ràng, kích thước to hơn 1.5 lần.
-    -- Khi rê chuột vào (MouseEnter): phóng to mượt mà 1.2 lần từ tâm AnchorPoint(0.5, 0.5),
-    -- TUYỆT ĐỐI CỐ ĐỊNH TÂM, KHÔNG BỊ CO GIẬT HAY DỊCH SANG TRÁI.
+    -- Kiến trúc tách biệt: Container cố định (hitbox) + VisualBox hiển thị bên trong.
+    -- Khi rê chuột (MouseEnter): VisualBox phóng to mượt mà 1.2 lần (Size 50x41) từ tâm AnchorPoint(0.5, 0.5),
+    -- TUYỆT ĐỐI CỐ ĐỊNH TÂM, loại bỏ hoàn toàn UIScale để triệt tiêu hiện tượng lệch tâm hiển thị và xung đột ma trận.
     local tweenInfoFast = TweenInfo.new(0.15, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
     local isHoveringTopButtons = false
 
+    local BOX_NORMAL_SIZE = UDim2.fromOffset(42, 34)
+    local BOX_HOVER_SIZE = UDim2.fromOffset(50, 41) -- 42 * 1.2 = 50.4, 34 * 1.2 = 40.8
+    local TEXT_NORMAL_SIZE = 26
+    local TEXT_HOVER_SIZE = 31 -- 26 * 1.2 = 31.2
+
     local function createTopBoxButton(name, text, xCenterOffset, isClose)
-        -- Hộp bao quanh kiểu khung hộp (box frame)
-        local box = corner(new("TextButton", header, {
+        -- Container cố định: Đóng vai trò là vị trí neo (slot) và vùng nhận tương tác
+        -- Kích thước mặc định đúng 42 × 34, AnchorPoint = (0.5, 0.5), Position cố định tại tâm
+        local container = new("TextButton", header, {
             Name = name,
-            Size = UDim2.fromOffset(42, 34),
+            Size = BOX_NORMAL_SIZE,
             AnchorPoint = Vector2.new(0.5, 0.5),
             Position = UDim2.new(1, xCenterOffset, 0.5, 0),
-            BackgroundColor3 = Color3.fromRGB(38, 41, 46),
-            BackgroundTransparency = 0.25,
+            BackgroundTransparency = 1,
             BorderSizePixel = 0,
             AutoButtonColor = false,
             Active = true,
             Selectable = false,
             Text = "",
             ClipsDescendants = false,
-        }), 6)
-
-        -- Viền hộp kim loại bạc tinh tế
-        stroke(box, 0.45)
-
-        -- UIScale bên trong giúp phóng to 1.2 lần từ tâm, loại bỏ hoàn toàn hiện tượng lệch trái
-        local boxScale = new("UIScale", box, {
-            Scale = 1.0,
         })
 
-        -- Ký tự to hơn 1.5 lần so với ban đầu
-        local textLabel = label(box, text, {
+        -- Phần tử hiển thị (Visual Box) nằm chính xác tại tâm của container
+        -- AnchorPoint = (0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5) giữ tâm cố định tuyệt đối khi scale
+        local visualBox = corner(new("Frame", container, {
+            Name = "VisualBox",
+            Size = BOX_NORMAL_SIZE,
+            AnchorPoint = Vector2.new(0.5, 0.5),
+            Position = UDim2.fromScale(0.5, 0.5),
+            BackgroundColor3 = Color3.fromRGB(38, 41, 46),
+            BackgroundTransparency = 0.25,
+            BorderSizePixel = 0,
+            Active = false,
+            ClipsDescendants = false,
+        }), 6)
+
+        -- Viền hộp kim loại bạc tinh tế, giữ nguyên độ nét 1px khi phóng to
+        stroke(visualBox, 0.45)
+
+        -- Ký tự to hơn 1.5 lần so với ban đầu, luôn căn chính giữa visualBox
+        local textLabel = label(visualBox, text, {
             Position = UDim2.fromOffset(0, 0),
             Size = UDim2.fromScale(1, 1),
             Text = text,
             TextColor3 = C.silver,
-            TextSize = 26,
+            TextSize = TEXT_NORMAL_SIZE,
             Font = Enum.Font.GothamBold,
             TextXAlignment = Enum.TextXAlignment.Center,
             TextYAlignment = Enum.TextYAlignment.Center,
+            Active = false,
         })
 
         local defaultBg = Color3.fromRGB(38, 41, 46)
         local hoverBg = isClose and Color3.fromRGB(190, 50, 50) or Color3.fromRGB(60, 65, 75)
 
-        connect(box.MouseEnter, function()
+        connect(container.MouseEnter, function()
             isHoveringTopButtons = true
             pcall(function()
-                TweenService:Create(boxScale, tweenInfoFast, { Scale = 1.2 }):Play()
-                TweenService:Create(box, tweenInfoFast, { BackgroundColor3 = hoverBg }):Play()
-                TweenService:Create(textLabel, tweenInfoFast, { TextColor3 = C.white }):Play()
+                TweenService:Create(container, tweenInfoFast, { Size = BOX_HOVER_SIZE }):Play()
+                TweenService:Create(visualBox, tweenInfoFast, {
+                    Size = BOX_HOVER_SIZE,
+                    BackgroundColor3 = hoverBg,
+                }):Play()
+                TweenService:Create(textLabel, tweenInfoFast, {
+                    TextSize = TEXT_HOVER_SIZE,
+                    TextColor3 = C.white,
+                }):Play()
             end)
         end)
 
-        connect(box.MouseLeave, function()
+        connect(container.MouseLeave, function()
             isHoveringTopButtons = false
             pcall(function()
-                TweenService:Create(boxScale, tweenInfoFast, { Scale = 1.0 }):Play()
-                TweenService:Create(box, tweenInfoFast, { BackgroundColor3 = defaultBg }):Play()
-                TweenService:Create(textLabel, tweenInfoFast, { TextColor3 = C.silver }):Play()
+                TweenService:Create(container, tweenInfoFast, { Size = BOX_NORMAL_SIZE }):Play()
+                TweenService:Create(visualBox, tweenInfoFast, {
+                    Size = BOX_NORMAL_SIZE,
+                    BackgroundColor3 = defaultBg,
+                }):Play()
+                TweenService:Create(textLabel, tweenInfoFast, {
+                    TextSize = TEXT_NORMAL_SIZE,
+                    TextColor3 = C.silver,
+                }):Play()
             end)
         end)
 
-        return box
+        return container
     end
 
     -- Hai nút ở góc phải: dấu trừ thu nhỏ và dấu nhân đóng cửa sổ dạng hộp nổi bật
@@ -1002,20 +1030,38 @@ function Menu.Create(ctx)
     local dragMoved = false
     local DRAG_DEADZONE = 5
 
-    local function isInsideButton(pos, btn)
+    local function isInsideButton(pos, btn, padding)
         if not (btn and btn.Visible) then return false end
+        local pad = padding or 0
         local ap = btn.AbsolutePosition
         local as = btn.AbsoluteSize
-        return pos.X >= ap.X and pos.X <= (ap.X + as.X)
-            and pos.Y >= ap.Y and pos.Y <= (ap.Y + as.Y)
+        return pos.X >= (ap.X - pad) and pos.X <= (ap.X + as.X + pad)
+            and pos.Y >= (ap.Y - pad) and pos.Y <= (ap.Y + as.Y + pad)
+    end
+
+    local function isInTopButtonZone(pos)
+        if isHoveringTopButtons then return true end
+        if isInsideButton(pos, closeButton, 8) or isInsideButton(pos, minimizeButton, 8) then
+            return true
+        end
+        if header and header.Visible then
+            local hap = header.AbsolutePosition
+            local has = header.AbsoluteSize
+            -- Khu vực 115px góc trên bên phải dành riêng cho 2 nút điều khiển
+            if pos.X >= (hap.X + has.X - 115) and pos.X <= (hap.X + has.X + 10)
+                and pos.Y >= (hap.Y - 5) and pos.Y <= (hap.Y + has.Y + 5) then
+                return true
+            end
+        end
+        return false
     end
 
     connect(header.InputBegan, function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1
             or input.UserInputType == Enum.UserInputType.Touch then
 
-            -- Nếu bấm vào nút dấu trừ hoặc dấu nhân, bỏ qua hoàn toàn kéo cửa sổ
-            if isHoveringTopButtons or isInsideButton(input.Position, closeButton) or isInsideButton(input.Position, minimizeButton) then
+            -- Tuyệt đối không kích hoạt kéo cửa sổ nếu thao tác diễn ra trên hoặc gần 2 nút điều khiển
+            if isInTopButtonZone(input.Position) then
                 return
             end
 
