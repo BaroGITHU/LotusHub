@@ -189,14 +189,11 @@ function Menu.Create(ctx)
     --   2. CHỈ VisualBox được phép phóng to 1.2 lần (Size 50x41) từ tâm AnchorPoint(0.5, 0.5) và Position = UDim2.fromScale(0.5, 0.5).
     --      Tâm hình học của nút được bảo toàn tuyệt đối tại cùng một tọa độ màn hình trước, trong và sau hover.
     --   3. Vùng nhận hover ổn định: Có cơ chế kiểm soát biên ngoài (4px padding) chống vòng lặp MouseEnter/MouseLeave và chống rung giật.
-    local tweenInfoFast = TweenInfo.new(0.15, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
     local isHoveringTopButtons = false
     local hoveredTopButtons = {}
 
     local BOX_NORMAL_SIZE = UDim2.fromOffset(42, 34)
-    local BOX_HOVER_SIZE = UDim2.fromOffset(50, 41) -- 42 * 1.2 = 50.4, 34 * 1.2 = 40.8
     local TEXT_NORMAL_SIZE = 26
-    local TEXT_HOVER_SIZE = 31 -- 26 * 1.2 = 31.2
 
     -- [I.0.DEBUG] HỆ THỐNG DIAGNOSTIC KIỂM TRA TỌA ĐỘ VÀ TÂM HÌNH HỌC (MẶC ĐỊNH OFF)
     -- Bật bằng cách đặt: getgenv().LotusHubDebugButtons = true hoặc ctx.debugButtonCoords = true
@@ -339,77 +336,13 @@ function Menu.Create(ctx)
             Active = false,
         })
 
-        local defaultBg = Color3.fromRGB(38, 41, 46)
-        local hoverBg = isClose and Color3.fromRGB(190, 50, 50) or Color3.fromRGB(60, 65, 75)
-
-        local isHovered = false
-        local leaveConn = nil
-
-        local function isPointerWithinVisualBox()
-            local mousePos = nil
-            pcall(function()
-                mousePos = UserInputService:GetMouseLocation()
-            end)
-            if not mousePos then return false end
-            local ap = visualBox.AbsolutePosition
-            local as = visualBox.AbsoluteSize
-            return mousePos.X >= ap.X and mousePos.X <= (ap.X + as.X)
-                and mousePos.Y >= ap.Y and mousePos.Y <= (ap.Y + as.Y)
-        end
-
-        local function finishLeave()
-            if leaveConn then
-                leaveConn:Disconnect()
-                leaveConn = nil
-            end
-            if not isHovered then return end
-            isHovered = false
-            hoveredTopButtons[name] = nil
-            isHoveringTopButtons = (next(hoveredTopButtons) ~= nil)
-
-            local beforeSnaps = nil
-            if DEBUG_BUTTON_COORDS then
-                beforeSnaps = captureAllSnapshots()
-            end
-
-            -- CHỈ TWEEN VisualBox và TextLabel. Tuyệt đối KHÔNG tween Container!
-            pcall(function()
-                TweenService:Create(visualBox, tweenInfoFast, {
-                    Size = BOX_NORMAL_SIZE,
-                    BackgroundColor3 = defaultBg,
-                }):Play()
-                TweenService:Create(textLabel, tweenInfoFast, {
-                    TextSize = TEXT_NORMAL_SIZE,
-                    TextColor3 = C.silver,
-                }):Play()
-            end)
-
-            if DEBUG_BUTTON_COORDS then
-                task.delay(0.16, function()
-                    verifySnapshots("MouseLeave:Completed", name, beforeSnaps)
-                end)
-            end
-        end
-
-        -- [ĐÃ TẮT HIỆU ỨNG HOVER] Nút − và × giờ là dạng TĨNH:
-        -- không phóng to, không đổi màu khi rê chuột => hitbox cố định, dễ bấm.
-        -- (Đã bỏ MouseEnter/MouseLeave + Tween. Click vẫn hoạt động bình thường.)
-
-        -- Đăng ký dọn dẹp kết nối an toàn khi UI bị destroy
-        table.insert(ctx.connections, {
-            Disconnect = function()
-                if leaveConn then
-                    leaveConn:Disconnect()
-                    leaveConn = nil
-                end
-            end
-        })
+        -- NÚT TĨNH: không hover, không tween, không phóng to, không đổi màu.
 
         local btnEntry = {
             container = container,
             visualBox = visualBox,
-            isHovered = function() return isHovered end,
-            finishLeave = finishLeave,
+            isHovered = function() return false end,
+            finishLeave = function() end,
         }
         topButtons[name] = btnEntry
 
