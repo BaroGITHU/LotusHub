@@ -172,19 +172,118 @@ function Menu.Create(ctx)
     -- [I.0] HỘP CHỨA NÚT DẤU TRỪ (−) VÀ DẤU NHÂN (×)
     -- Thiết kế dạng hộp (boxed frame) bo góc, viền hộp rõ ràng, kích thước to hơn 1.5 lần.
     -- Kiến trúc tách biệt: Container cố định (hitbox) + VisualBox hiển thị bên trong.
-    -- Khi rê chuột (MouseEnter): VisualBox phóng to mượt mà 1.2 lần (Size 50x41) từ tâm AnchorPoint(0.5, 0.5),
-    -- TUYỆT ĐỐI CỐ ĐỊNH TÂM, loại bỏ hoàn toàn UIScale để triệt tiêu hiện tượng lệch tâm hiển thị và xung đột ma trận.
+    -- QUY TẮC CỐ ĐỊNH TUYỆT ĐỐI:
+    --   1. Container cố định 100% trong mọi trạng thái: Size = (42, 34), Position = UDim2.new(1, xOffset, 0.5, 0), AnchorPoint = (0.5, 0.5).
+    --      Tuyệt đối KHÔNG áp dụng bất kỳ Tween hay logic thay đổi Size/Position nào lên Container.
+    --   2. CHỈ VisualBox được phép phóng to 1.2 lần (Size 50x41) từ tâm AnchorPoint(0.5, 0.5) và Position = UDim2.fromScale(0.5, 0.5).
+    --      Tâm hình học của nút được bảo toàn tuyệt đối tại cùng một tọa độ màn hình trước, trong và sau hover.
+    --   3. Vùng nhận hover ổn định: Có cơ chế kiểm soát biên ngoài (4px padding) chống vòng lặp MouseEnter/MouseLeave và chống rung giật.
     local tweenInfoFast = TweenInfo.new(0.15, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
     local isHoveringTopButtons = false
+    local hoveredTopButtons = {}
 
     local BOX_NORMAL_SIZE = UDim2.fromOffset(42, 34)
     local BOX_HOVER_SIZE = UDim2.fromOffset(50, 41) -- 42 * 1.2 = 50.4, 34 * 1.2 = 40.8
     local TEXT_NORMAL_SIZE = 26
     local TEXT_HOVER_SIZE = 31 -- 26 * 1.2 = 31.2
 
+    -- [I.0.DEBUG] HỆ THỐNG DIAGNOSTIC KIỂM TRA TỌA ĐỘ VÀ TÂM HÌNH HỌC (MẶC ĐỊNH OFF)
+    -- Bật bằng cách đặt: getgenv().LotusHubDebugButtons = true hoặc ctx.debugButtonCoords = true
+    local DEBUG_BUTTON_COORDS = (ctx and ctx.debugButtonCoords)
+        or (env and env.LotusHubDebugButtons)
+        or false
+
+    local topButtons = {}
+
+    local function captureSnapshot(targetName, c, vb)
+        local hPos = header and header.AbsolutePosition or Vector2.zero
+        local hSize = header and header.AbsoluteSize or Vector2.zero
+        local mPos = main and main.AbsolutePosition or Vector2.zero
+        local mSize = main and main.AbsoluteSize or Vector2.zero
+        local scale = uiScale and uiScale.Scale or 1
+        local cPos = c and c.AbsolutePosition or Vector2.zero
+        local cSize = c and c.AbsoluteSize or Vector2.zero
+        local vbPos = vb and vb.AbsolutePosition or Vector2.zero
+        local vbSize = vb and vb.AbsoluteSize or Vector2.zero
+
+        return {
+            name = targetName,
+            headerPos = hPos,
+            headerSize = hSize,
+            headerCenter = hPos + hSize / 2,
+            mainPos = mPos,
+            mainSize = mSize,
+            mainCenter = mPos + mSize / 2,
+            scale = scale,
+            cPos = cPos,
+            cSize = cSize,
+            cCenter = cPos + cSize / 2,
+            vbPos = vbPos,
+            vbSize = vbSize,
+            vbCenter = vbPos + vbSize / 2,
+        }
+    end
+
+    local function captureAllSnapshots()
+        local snaps = {}
+        for bName, bData in pairs(topButtons) do
+            snaps[bName] = captureSnapshot(bName, bData.container, bData.visualBox)
+        end
+        return snaps
+    end
+
+    local function verifySnapshots(phase, triggerButtonName, beforeSnaps)
+        if not DEBUG_BUTTON_COORDS or not beforeSnaps then return end
+        local TOLERANCE = 0.5 -- Sai số làm tròn sub-pixel tối đa cho phép
+
+        for bName, beforeSnap in pairs(beforeSnaps) do
+            local bData = topButtons[bName]
+            if bData then
+                local afterSnap = captureSnapshot(bName, bData.container, bData.visualBox)
+                local dCCenter = afterSnap.cCenter - beforeSnap.cCenter
+                local dVbCenter = afterSnap.vbCenter - beforeSnap.vbCenter
+                local dMPos = afterSnap.mainPos - beforeSnap.mainPos
+                local dHPos = afterSnap.headerPos - beforeSnap.headerPos
+                local dScale = afterSnap.scale - beforeSnap.scale
+
+                local cShift = (math.abs(dCCenter.X) > TOLERANCE or math.abs(dCCenter.Y) > TOLERANCE)
+                local vbShift = (math.abs(dVbCenter.X) > TOLERANCE or math.abs(dVbCenter.Y) > TOLERANCE)
+                local mShift = (math.abs(dMPos.X) > TOLERANCE or math.abs(dMPos.Y) > TOLERANCE)
+                local hShift = (math.abs(dHPos.X) > TOLERANCE or math.abs(dHPos.Y) > TOLERANCE)
+                local scaleShift = (math.abs(dScale) > 0.001)
+
+                local isTrigger = (bName == triggerButtonName)
+                local tag = isTrigger and "[TRIGGER]" or "[CROSSTALK-CHECK]"
+
+                if cShift or vbShift or mShift or hShift or scaleShift then
+                    warn(string.format(
+                        "[LotusHub DIAGNOSTIC WARNING] %s %s | Phase=%s | TriggeredBy=%s\n" ..
+                        "  -> Container Center Shift: Delta=(%.2f, %.2f) (Pos: %.1f, %.1f -> %.1f, %.1f | Size: %.1f, %.1f -> %.1f, %.1f)\n" ..
+                        "  -> VisualBox Center Shift: Delta=(%.2f, %.2f) (Pos: %.1f, %.1f -> %.1f, %.1f | Size: %.1f, %.1f -> %.1f, %.1f)\n" ..
+                        "  -> Main Pos Shift: Delta=(%.2f, %.2f)\n" ..
+                        "  -> Header Pos Shift: Delta=(%.2f, %.2f)\n" ..
+                        "  -> UIScale Change: Delta=%.4f (Scale=%.4f)",
+                        tag, bName, phase, triggerButtonName,
+                        dCCenter.X, dCCenter.Y, beforeSnap.cPos.X, beforeSnap.cPos.Y, afterSnap.cPos.X, afterSnap.cPos.Y, beforeSnap.cSize.X, beforeSnap.cSize.Y, afterSnap.cSize.X, afterSnap.cSize.Y,
+                        dVbCenter.X, dVbCenter.Y, beforeSnap.vbPos.X, beforeSnap.vbPos.Y, afterSnap.vbPos.X, afterSnap.vbPos.Y, beforeSnap.vbSize.X, beforeSnap.vbSize.Y, afterSnap.vbSize.X, afterSnap.vbSize.Y,
+                        dMPos.X, dMPos.Y,
+                        dHPos.X, dHPos.Y,
+                        dScale, afterSnap.scale
+                    ))
+                else
+                    print(string.format(
+                        "[LotusHub DIAGNOSTIC PASS] %s %s | Phase=%s | Center=(%.1f, %.1f) | VB.Size=(%.1f, %.1f) | UIScale=%.3f | Zero shift.",
+                        tag, bName, phase, afterSnap.cCenter.X, afterSnap.cCenter.Y, afterSnap.vbSize.X, afterSnap.vbSize.Y, afterSnap.scale
+                    ))
+                end
+            end
+        end
+    end
+
     local function createTopBoxButton(name, text, xCenterOffset, isClose)
-        -- Container cố định: Đóng vai trò là vị trí neo (slot) và vùng nhận tương tác
-        -- Kích thước mặc định đúng 42 × 34, AnchorPoint = (0.5, 0.5), Position cố định tại tâm
+        -- Container CỐ ĐỊNH TUYỆT ĐỐI: Vùng neo slot và hitbox chuẩn xác
+        -- Giữ nguyên vĩnh viễn: Size 42x34, AnchorPoint (0.5, 0.5), Position cố định
+        -- KHÔNG BAO GIỜ TWEEN CONTAINER
         local container = new("TextButton", header, {
             Name = name,
             Size = BOX_NORMAL_SIZE,
@@ -199,8 +298,8 @@ function Menu.Create(ctx)
             ClipsDescendants = false,
         })
 
-        -- Phần tử hiển thị (Visual Box) nằm chính xác tại tâm của container
-        -- AnchorPoint = (0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5) giữ tâm cố định tuyệt đối khi scale
+        -- Phần tử hiển thị (Visual Box) là phần tử DUY NHẤT được phép scale khi hover
+        -- AnchorPoint = (0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5) giữ tâm cố định tuyệt đối tại tâm container
         local visualBox = corner(new("Frame", container, {
             Name = "VisualBox",
             Size = BOX_NORMAL_SIZE,
@@ -232,25 +331,38 @@ function Menu.Create(ctx)
         local defaultBg = Color3.fromRGB(38, 41, 46)
         local hoverBg = isClose and Color3.fromRGB(190, 50, 50) or Color3.fromRGB(60, 65, 75)
 
-        connect(container.MouseEnter, function()
-            isHoveringTopButtons = true
-            pcall(function()
-                TweenService:Create(container, tweenInfoFast, { Size = BOX_HOVER_SIZE }):Play()
-                TweenService:Create(visualBox, tweenInfoFast, {
-                    Size = BOX_HOVER_SIZE,
-                    BackgroundColor3 = hoverBg,
-                }):Play()
-                TweenService:Create(textLabel, tweenInfoFast, {
-                    TextSize = TEXT_HOVER_SIZE,
-                    TextColor3 = C.white,
-                }):Play()
-            end)
-        end)
+        local isHovered = false
+        local leaveConn = nil
 
-        connect(container.MouseLeave, function()
-            isHoveringTopButtons = false
+        local function isPointerWithinVisualBox()
+            local mousePos = nil
             pcall(function()
-                TweenService:Create(container, tweenInfoFast, { Size = BOX_NORMAL_SIZE }):Play()
+                mousePos = UserInputService:GetMouseLocation()
+            end)
+            if not mousePos then return false end
+            local ap = visualBox.AbsolutePosition
+            local as = visualBox.AbsoluteSize
+            return mousePos.X >= ap.X and mousePos.X <= (ap.X + as.X)
+                and mousePos.Y >= ap.Y and mousePos.Y <= (ap.Y + as.Y)
+        end
+
+        local function finishLeave()
+            if leaveConn then
+                leaveConn:Disconnect()
+                leaveConn = nil
+            end
+            if not isHovered then return end
+            isHovered = false
+            hoveredTopButtons[name] = nil
+            isHoveringTopButtons = (next(hoveredTopButtons) ~= nil)
+
+            local beforeSnaps = nil
+            if DEBUG_BUTTON_COORDS then
+                beforeSnaps = captureAllSnapshots()
+            end
+
+            -- CHỈ TWEEN VisualBox và TextLabel. Tuyệt đối KHÔNG tween Container!
+            pcall(function()
                 TweenService:Create(visualBox, tweenInfoFast, {
                     Size = BOX_NORMAL_SIZE,
                     BackgroundColor3 = defaultBg,
@@ -260,7 +372,91 @@ function Menu.Create(ctx)
                     TextColor3 = C.silver,
                 }):Play()
             end)
+
+            if DEBUG_BUTTON_COORDS then
+                task.delay(0.16, function()
+                    verifySnapshots("MouseLeave:Completed", name, beforeSnaps)
+                end)
+            end
+        end
+
+        connect(container.MouseEnter, function()
+            if leaveConn then
+                leaveConn:Disconnect()
+                leaveConn = nil
+            end
+            if isHovered then return end
+            isHovered = true
+            hoveredTopButtons[name] = true
+            isHoveringTopButtons = true
+
+            -- Chống xung đột giữa 2 nút: nếu nút kia đang hover, giải phóng ngay lập tức
+            for otherName, otherBtn in pairs(topButtons) do
+                if otherName ~= name and otherBtn.isHovered() then
+                    otherBtn.finishLeave()
+                end
+            end
+
+            local beforeSnaps = nil
+            if DEBUG_BUTTON_COORDS then
+                beforeSnaps = captureAllSnapshots()
+            end
+
+            -- CHỈ TWEEN VisualBox và TextLabel. Tuyệt đối KHÔNG tween Container!
+            pcall(function()
+                TweenService:Create(visualBox, tweenInfoFast, {
+                    Size = BOX_HOVER_SIZE,
+                    BackgroundColor3 = hoverBg,
+                }):Play()
+                TweenService:Create(textLabel, tweenInfoFast, {
+                    TextSize = TEXT_HOVER_SIZE,
+                    TextColor3 = C.white,
+                }):Play()
+            end)
+
+            if DEBUG_BUTTON_COORDS then
+                task.delay(0.16, function()
+                    verifySnapshots("MouseEnter:Completed", name, beforeSnaps)
+                end)
+            end
         end)
+
+        connect(container.MouseLeave, function()
+            if not isHovered then return end
+            -- Kiểm tra xem chuột có đang nằm trong phần đệm mở rộng 4px của VisualBox hay không
+            if isPointerWithinVisualBox() then
+                -- Giữ nguyên trạng thái hover cho đến khi con trỏ chuột thực sự rời khỏi VisualBox
+                if leaveConn then leaveConn:Disconnect() end
+                leaveConn = UserInputService.InputChanged:Connect(function(input)
+                    if input.UserInputType == Enum.UserInputType.MouseMovement
+                        or input.UserInputType == Enum.UserInputType.Touch then
+                        if not isPointerWithinVisualBox() then
+                            finishLeave()
+                        end
+                    end
+                end)
+            else
+                finishLeave()
+            end
+        end)
+
+        -- Đăng ký dọn dẹp kết nối an toàn khi UI bị destroy
+        table.insert(ctx.connections, {
+            Disconnect = function()
+                if leaveConn then
+                    leaveConn:Disconnect()
+                    leaveConn = nil
+                end
+            end
+        })
+
+        local btnEntry = {
+            container = container,
+            visualBox = visualBox,
+            isHovered = function() return isHovered end,
+            finishLeave = finishLeave,
+        }
+        topButtons[name] = btnEntry
 
         return container
     end
