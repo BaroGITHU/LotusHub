@@ -26,6 +26,11 @@ local MODULE_PATHS = {
     Match = "modules/Gameplay/Match.lua",
     Replay = "modules/Gameplay/Replay.lua",
     BoostPerformance = "modules/Gameplay/BoostPerformance.lua",
+    Modifiers = "modules/Modifiers.lua",
+    ModifierConfig = "modules/Modifiers/ModifierConfig.lua",
+    AutoPick = "modules/Modifiers/AutoPick.lua",
+    RestartAfterWaves = "modules/Modifiers/Restart/RestartAfterWaves.lua",
+    RestartIfMissingModifier = "modules/Modifiers/Restart/RestartIfMissingModifier.lua",
 }
 
 -- [IMPORT] Nếu executor lưu file trong thư mục workspace/LotusHub,
@@ -59,10 +64,15 @@ end
 
 -- Import TRƯỚC KHI đóng UI cũ: nếu thiếu file, UI đang dùng không mất.
 local Menu = loadModule(MODULE_PATHS.Menu)
+local ModifierConfig = loadModule(MODULE_PATHS.ModifierConfig)
 local Gameplay = loadModule(MODULE_PATHS.Gameplay)
+local Modifiers = loadModule(MODULE_PATHS.Modifiers)
 local Match = loadModule(MODULE_PATHS.Match)
 local Replay = loadModule(MODULE_PATHS.Replay)
 local BoostPerformance = loadModule(MODULE_PATHS.BoostPerformance)
+local AutoPick = loadModule(MODULE_PATHS.AutoPick)
+local RestartAfterWaves = loadModule(MODULE_PATHS.RestartAfterWaves)
+local RestartIfMissingModifier = loadModule(MODULE_PATHS.RestartIfMissingModifier)
 
 -- [START] Chỉ khi import xong mới dọn phiên cũ, tránh trùng worker/GUI.
 if type(env.LotusHubUI) == "table" and type(env.LotusHubUI.Destroy) == "function" then
@@ -77,7 +87,8 @@ local ctx = {
     playerGui = playerGui,
     state = {},
     expanded = {},
-    knownModifiers = {}, -- MISSING: không tự bịa modifier.
+    knownModifiers = {},
+    ModifierConfig = ModifierConfig,
     connections = {},
     alive = true,
     screen = nil,
@@ -104,14 +115,19 @@ function ctx:Destroy()
     if self.env.LotusHubUI == self.ui then self.env.LotusHubUI = nil end
 end
 
--- [GẮN MODULE] Lần lượt tạo UI, đăng ký Gameplay, nối Match vào toggle.
+-- [GẮN MODULE] Lần lượt tạo UI, đăng ký tab Gameplay & Modifiers, nối Match, Replay, Boost, AutoPick, Restart.
 local ok, err = pcall(function()
     local ui = Menu.Create(ctx)
     ctx.ui = ui
+    ModifierConfig.Init(ctx, ui)
     Gameplay.Init(ctx, ui)
+    Modifiers.Init(ctx, ui)
     Match.Init(ctx, ui)
     Replay.Init(ctx, ui)
     BoostPerformance.Init(ctx, ui)
+    AutoPick.Init(ctx, ui)
+    RestartAfterWaves.Init(ctx, ui)
+    RestartIfMissingModifier.Init(ctx, ui)
     env.LotusHubUI = ui -- API tương thích bản cũ.
     ui:ShowTab("Gameplay")
 end)
@@ -121,4 +137,4 @@ if not ok then
     error("[LotusHub] Khởi động thất bại: " .. tostring(err))
 end
 
-print("[LotusHub Modular] Đã nạp Menu + Gameplay + Match V3 + Replay + BoostPerformance.")
+print("[LotusHub Modular] Đã nạp Menu + Gameplay + Match V3 + Replay + BoostPerformance + Modifiers + Restart.")

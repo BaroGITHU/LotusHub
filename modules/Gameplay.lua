@@ -1,7 +1,7 @@
 --[[
-    LotusHub / modules/Gameplay.lua — Chỉ chứa nội dung tab Gameplay.
-    Nhóm chức năng hiện có: Match, Replay, Failsafe, Boost Performance.
-    (Đã loại bỏ nhóm Restart và Modifiers theo yêu cầu người dùng).
+    LotusHub / modules/Gameplay.lua — Nội dung tab Gameplay.
+    Nhóm chức năng: Match, Replay, Failsafe, Boost Performance.
+    (Các mục Modifiers và Restart đã được chuyển sang tab Modifiers riêng).
 ]]
 local Gameplay = {}
 
@@ -39,7 +39,6 @@ function Gameplay.Init(ctx, ui)
     local scroll = ui.scroll
     local section = ui.section
     local stateToggle = ui.stateToggle
-    local toggleItem = ui.toggleItem
     local sliderItem = ui.sliderItem
     local infoItem = ui.infoItem
 
@@ -114,9 +113,9 @@ function Gameplay.Init(ctx, ui)
         infoItem(boost, "FreeFire Graphics: Tối ưu FPS, tắt đổ bóng & hiệu ứng.")
     end
 
-    -- [5] API tương thích ngược cho SetModifiers (tránh lỗi nếu module khác gọi).
+    -- [5] API tương thích ngược cho SetModifiers
     function ui:SetModifiers(names)
-        -- No-op: tính năng Modifiers đã được gỡ bỏ khỏi giao diện.
+        -- No-op: tab Modifiers đã quản lý danh sách Modifiers
     end
 
     -- [6] Đăng ký tab Gameplay với Menu chính.
