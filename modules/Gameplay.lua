@@ -26,8 +26,8 @@ function Gameplay.Init(ctx, ui)
 
     -- [2] Trạng thái nhóm gập/mở (không tự thay đổi khi chuyển tab).
     local defaultExpanded = {
-        Match = true,
-        Replay = true,
+        Match = false,
+        Replay = false,
         Failsafe = false,
         BoostPerformance = false,
     }
@@ -45,18 +45,43 @@ function Gameplay.Init(ctx, ui)
     -- [4] Hàm dựng nội dung tab Gameplay.
     local function buildGameplay()
         -- Nhóm MATCH: Auto Startgame và Auto Active Auto Play là hai toggle riêng.
-        local match = section(scroll, "Match", "Match", true)
+        local match = section(scroll, "Match", "Match", false)
         stateToggle(match, "Auto Startgame", "AutoStartgame")
         stateToggle(match, "Auto Active Auto Play", "AutoActiveAutoPlay")
 
         -- Nhóm REPLAY: giữ Auto Replay và tùy chọn về Lobby sau N lần.
-        local replay = section(scroll, "Replay", "Replay", true)
-        stateToggle(replay, "Auto Replay", "AutoReplay")
-        stateToggle(replay, "Teleport to lobby after N replays", "ReplayLimitEnabled")
-        sliderItem(replay, "Replay count (N)", state, "ReplayLimit", 1, 100, "")
+        local replay = section(scroll, "Replay", "Replay", false)
+        local autoRepToggle = stateToggle(replay, "Auto Replay", "AutoReplay")
+        autoRepToggle.LayoutOrder = 1
+
+        local replaySub
+        local teleToggle = stateToggle(replay, "Teleport to lobby after N replays", "ReplayLimitEnabled", function(enabled)
+            if replaySub then replaySub.Visible = (enabled == true) end
+        end)
+        teleToggle.LayoutOrder = 2
+
+        -- Khung chứa con thụt lề cho Teleport to lobby after N replays (nằm NGAY DƯỚI Teleport to lobby)
+        replaySub = Instance.new("Frame")
+        replaySub.Name = "ReplayLimitSubGroup"
+        replaySub.LayoutOrder = 3
+        replaySub.Size = UDim2.new(1, 0, 0, 0)
+        replaySub.AutomaticSize = Enum.AutomaticSize.Y
+        replaySub.BackgroundTransparency = 1
+        replaySub.Visible = (state.ReplayLimitEnabled == true)
+        replaySub.Parent = replay
+        local subLayout = Instance.new("UIListLayout")
+        subLayout.SortOrder = Enum.SortOrder.LayoutOrder
+        subLayout.Padding = UDim.new(0, 6)
+        subLayout.Parent = replaySub
+        local subPadding = Instance.new("UIPadding")
+        subPadding.PaddingLeft = UDim.new(0, 18)
+        subPadding.PaddingRight = UDim.new(0, 2)
+        subPadding.Parent = replaySub
+
+        sliderItem(replaySub, "Replay count (N)", state, "ReplayLimit", 1, 100, "")
 
         -- [REPLAY STATUS] Hiển thị đếm + nút Reset
-        local progressRow = infoItem(replay, "Đã Replay: 0 / " .. tostring(state.ReplayLimit))
+        local progressRow = infoItem(replaySub, "Đã Replay: 0 / " .. tostring(state.ReplayLimit))
         local progressText = progressRow:FindFirstChildWhichIsA("TextLabel")
         if progressText then
             progressText.Size = UDim2.new(1, -140, 1, -6)

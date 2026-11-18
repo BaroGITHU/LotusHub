@@ -25,8 +25,8 @@ function Modifiers.Init(ctx, ui)
 
     -- [2] Trạng thái nhóm gập/mở mặc định trong tab Modifiers
     local defaultExpanded = {
-        AutoPick = true,
-        Restart = true,
+        AutoPick = false,
+        Restart = false,
     }
     for key, value in pairs(defaultExpanded) do
         if ctx.expanded[key] == nil then ctx.expanded[key] = value end
@@ -65,21 +65,44 @@ function Modifiers.Init(ctx, ui)
         -- ====================================================================
         -- 1. NHÓM AUTO PICK MODIFIERS
         -- ====================================================================
-        local pickSection = section(scroll, "Auto Pick Modifiers", "AutoPick", true)
-        stateToggle(pickSection, "Auto Pick Modifiers", "AutoPickModifiers")
+        local pickSection = section(scroll, "AutoPick", "AutoPick", false)
+
+        local pickSub
+        local pickToggle = stateToggle(pickSection, "Auto Pick Modifiers", "AutoPickModifiers", function(enabled)
+            if pickSub then pickSub.Visible = (enabled == true) end
+        end)
+        pickToggle.LayoutOrder = 1
+
+        -- Khung chứa con thụt lề cho bảng danh sách AutoPick (nằm NGAY DƯỚI Auto Pick Modifiers)
+        pickSub = Instance.new("Frame")
+        pickSub.Name = "AutoPickSubGroup"
+        pickSub.LayoutOrder = 2
+        pickSub.Size = UDim2.new(1, 0, 0, 0)
+        pickSub.AutomaticSize = Enum.AutomaticSize.Y
+        pickSub.BackgroundTransparency = 1
+        pickSub.Visible = (state.AutoPickModifiers == true)
+        pickSub.Parent = pickSection
+        local psPadding = Instance.new("UIPadding")
+        psPadding.PaddingLeft = UDim.new(0, 18)
+        psPadding.PaddingRight = UDim.new(0, 2)
+        psPadding.Parent = pickSub
 
         local modTableContainer = Instance.new("Frame")
         modTableContainer.Name = "ModifierTableContainer"
-        modTableContainer.LayoutOrder = #pickSection:GetChildren()
+        modTableContainer.LayoutOrder = 1
         modTableContainer.Size = UDim2.new(1, 0, 0, 260)
-        modTableContainer.BackgroundColor3 = C.row
-        modTableContainer.BackgroundTransparency = 0.26
+        modTableContainer.BackgroundColor3 = C.subRow or Color3.fromRGB(40, 42, 47)
+        modTableContainer.BackgroundTransparency = 0.32
         modTableContainer.BorderSizePixel = 0
         modTableContainer.Active = true
-        modTableContainer.Parent = pickSection
+        modTableContainer.Parent = pickSub
         local mtcCorner = Instance.new("UICorner")
         mtcCorner.CornerRadius = UDim.new(0, 8)
         mtcCorner.Parent = modTableContainer
+        local mtcStroke = Instance.new("UIStroke")
+        mtcStroke.Color = Color3.fromRGB(70, 75, 84)
+        mtcStroke.Transparency = 0.45
+        mtcStroke.Parent = modTableContainer
 
         local modTableHeader = Instance.new("TextLabel")
         modTableHeader.Size = UDim2.new(1, -24, 0, 26)
@@ -283,24 +306,69 @@ function Modifiers.Init(ctx, ui)
         -- ====================================================================
         -- 2. NHÓM RESTART (CON CỦA MODIFIERS)
         -- ====================================================================
-        local restartSection = section(scroll, "Restart", "Restart", true)
-        stateToggle(restartSection, "Auto Restart After Waves", "RestartAfterWavesEnabled")
-        sliderItem(restartSection, "Restart at wave", state, "RestartAfterWaves", 1, 200, "")
-        stateToggle(restartSection, "Auto Restart If Don't Have Modifier", "RestartIfMissingModifier")
+        local restartSection = section(scroll, "Restart", "Restart", false)
+
+        -- 1. Mục cha: Auto Restart After Waves
+        local wavesSub
+        local wavesToggle = stateToggle(restartSection, "Auto Restart After Waves", "RestartAfterWavesEnabled", function(enabled)
+            if wavesSub then wavesSub.Visible = (enabled == true) end
+        end)
+        wavesToggle.LayoutOrder = 1
+
+        -- 1.1 Khung con thụt lề nằm NGAY DƯỚI Auto Restart After Waves
+        wavesSub = Instance.new("Frame")
+        wavesSub.Name = "RestartWavesSubGroup"
+        wavesSub.LayoutOrder = 2
+        wavesSub.Size = UDim2.new(1, 0, 0, 0)
+        wavesSub.AutomaticSize = Enum.AutomaticSize.Y
+        wavesSub.BackgroundTransparency = 1
+        wavesSub.Visible = (state.RestartAfterWavesEnabled == true)
+        wavesSub.Parent = restartSection
+        local wsPadding = Instance.new("UIPadding")
+        wsPadding.PaddingLeft = UDim.new(0, 18)
+        wsPadding.PaddingRight = UDim.new(0, 2)
+        wsPadding.Parent = wavesSub
+
+        sliderItem(wavesSub, "Restart at wave", state, "RestartAfterWaves", 1, 200, "")
+
+        -- 2. Mục cha: Auto Restart If Don't Have Modifier
+        local missingModSub
+        local missingModToggle = stateToggle(restartSection, "Auto Restart If Don't Have Modifier", "RestartIfMissingModifier", function(enabled)
+            if missingModSub then missingModSub.Visible = (enabled == true) end
+        end)
+        missingModToggle.LayoutOrder = 3
+
+        -- 2.1 Khung con thụt lề nằm NGAY DƯỚI Auto Restart If Don't Have Modifier
+        missingModSub = Instance.new("Frame")
+        missingModSub.Name = "RestartMissingModSubGroup"
+        missingModSub.LayoutOrder = 4
+        missingModSub.Size = UDim2.new(1, 0, 0, 0)
+        missingModSub.AutomaticSize = Enum.AutomaticSize.Y
+        missingModSub.BackgroundTransparency = 1
+        missingModSub.Visible = (state.RestartIfMissingModifier == true)
+        missingModSub.Parent = restartSection
+        local mmPadding = Instance.new("UIPadding")
+        mmPadding.PaddingLeft = UDim.new(0, 18)
+        mmPadding.PaddingRight = UDim.new(0, 2)
+        mmPadding.Parent = missingModSub
 
         -- [BẢNG MODIFIER ĐỂ CHỌN MODIFIER YÊU CẦU]
         local restartTableContainer = Instance.new("Frame")
         restartTableContainer.Name = "RestartModifierTableContainer"
-        restartTableContainer.LayoutOrder = #restartSection:GetChildren()
+        restartTableContainer.LayoutOrder = 1
         restartTableContainer.Size = UDim2.new(1, 0, 0, 220)
-        restartTableContainer.BackgroundColor3 = C.row
-        restartTableContainer.BackgroundTransparency = 0.26
+        restartTableContainer.BackgroundColor3 = C.subRow or Color3.fromRGB(40, 42, 47)
+        restartTableContainer.BackgroundTransparency = 0.32
         restartTableContainer.BorderSizePixel = 0
         restartTableContainer.Active = true
-        restartTableContainer.Parent = restartSection
+        restartTableContainer.Parent = missingModSub
         local rtcCorner = Instance.new("UICorner")
         rtcCorner.CornerRadius = UDim.new(0, 8)
         rtcCorner.Parent = restartTableContainer
+        local rtcStroke = Instance.new("UIStroke")
+        rtcStroke.Color = Color3.fromRGB(70, 75, 84)
+        rtcStroke.Transparency = 0.45
+        rtcStroke.Parent = restartTableContainer
 
         -- Tiêu đề bảng
         local restartTableHeader = Instance.new("TextLabel")

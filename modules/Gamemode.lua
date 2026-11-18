@@ -28,8 +28,8 @@ function Gamemode.Init(ctx, ui)
 
     -- [2] Trạng thái mở rộng nhóm mặc định
     local defaultExpanded = {
-        GrandPrix = true,
-        TrailOfTheSaint = true,
+        GrandPrix = false,
+        TrailOfTheSaint = false,
     }
     for key, value in pairs(defaultExpanded) do
         if ctx.expanded[key] == nil then ctx.expanded[key] = value end
@@ -58,7 +58,7 @@ function Gamemode.Init(ctx, ui)
         -- ====================================================================
         -- 1. NHÓM GRAND PRIX
         -- ====================================================================
-        local grandPrixSection = section(scroll, "GrandPrix", "Grand Prix", true)
+        local grandPrixSection = section(scroll, "GrandPrix", "Grand Prix", false)
         stateToggle(grandPrixSection, "Auto join Grand Prix", "AutoJoinGrandPrix")
         stateToggle(grandPrixSection, "Auto Horse Racing", "AutoHorseRacing")
         infoItem(grandPrixSection, "Grand Prix: Tự động xác nhận Mount Picker và đua ngựa autopilot 1000 spd.")
@@ -66,22 +66,45 @@ function Gamemode.Init(ctx, ui)
         -- ====================================================================
         -- 2. NHÓM TRAIL OF THE SAINT
         -- ====================================================================
-        local saintSection = section(scroll, "TrailOfTheSaint", "Trail Of The Saint", true)
-        stateToggle(saintSection, "Auto Trial Of The Saint", "AutoTrialOfTheSaint")
+        local saintSection = section(scroll, "TrailOfTheSaint", "Trail Of The Saint", false)
+
+        local saintSub
+        local saintToggle = stateToggle(saintSection, "Auto Trial Of The Saint", "AutoTrialOfTheSaint", function(enabled)
+            if saintSub then saintSub.Visible = (enabled == true) end
+        end)
+        saintToggle.LayoutOrder = 1
+
+        -- Khung chứa con thụt lề cho bảng chọn Ending của Trail Of The Saint (nằm NGAY DƯỚI Auto Trial Of The Saint)
+        saintSub = Instance.new("Frame")
+        saintSub.Name = "TrailSaintSubGroup"
+        saintSub.LayoutOrder = 2
+        saintSub.Size = UDim2.new(1, 0, 0, 0)
+        saintSub.AutomaticSize = Enum.AutomaticSize.Y
+        saintSub.BackgroundTransparency = 1
+        saintSub.Visible = (state.AutoTrialOfTheSaint == true)
+        saintSub.Parent = saintSection
+        local ssPadding = Instance.new("UIPadding")
+        ssPadding.PaddingLeft = UDim.new(0, 18)
+        ssPadding.PaddingRight = UDim.new(0, 2)
+        ssPadding.Parent = saintSub
 
         -- [BẢNG CHỌN GIỮA CÁC ENDING (Tương tự bảng Modifier)]
         local endingContainer = Instance.new("Frame")
         endingContainer.Name = "TrialEndingContainer"
-        endingContainer.LayoutOrder = #saintSection:GetChildren()
+        endingContainer.LayoutOrder = 1
         endingContainer.Size = UDim2.new(1, 0, 0, 140)
-        endingContainer.BackgroundColor3 = C.row
-        endingContainer.BackgroundTransparency = 0.26
+        endingContainer.BackgroundColor3 = C.subRow or Color3.fromRGB(40, 42, 47)
+        endingContainer.BackgroundTransparency = 0.32
         endingContainer.BorderSizePixel = 0
         endingContainer.Active = true
-        endingContainer.Parent = saintSection
+        endingContainer.Parent = saintSub
         local ecCorner = Instance.new("UICorner")
         ecCorner.CornerRadius = UDim.new(0, 8)
         ecCorner.Parent = endingContainer
+        local ecStroke = Instance.new("UIStroke")
+        ecStroke.Color = Color3.fromRGB(70, 75, 84)
+        ecStroke.Transparency = 0.45
+        ecStroke.Parent = endingContainer
 
         local ecHeader = Instance.new("TextLabel")
         ecHeader.Size = UDim2.new(1, -24, 0, 26)

@@ -57,6 +57,8 @@ function Menu.Create(ctx)
         panel = Color3.fromRGB(11, 13, 17),
         panelBorder = Color3.fromRGB(100, 105, 111),
         row = Color3.fromRGB(56, 58, 63),
+        subRow = Color3.fromRGB(40, 42, 47),
+        subRowBorder = Color3.fromRGB(70, 75, 84),
         rowHover = Color3.fromRGB(76, 79, 85),
         active = Color3.fromRGB(105, 111, 117),
         silver = Color3.fromRGB(225, 228, 232),
@@ -407,78 +409,108 @@ function Menu.Create(ctx)
 
     -- [L] CÁC THÀNH PHẦN GIAO DIỆN CHUẨN (UI COMPONENTS)
     local function itemFrame(parent, height)
-        return corner(new("Frame", parent, {
-            Size = UDim2.new(1, 0, 0, height or 49),
-            BackgroundColor3 = C.row,
-            BackgroundTransparency = 0.26,
+        local frame = corner(new("Frame", parent, {
+            LayoutOrder = #parent:GetChildren(),
+            Size = UDim2.new(1, 0, 0, height or 44),
+            BackgroundColor3 = C.subRow,
+            BackgroundTransparency = 0.32,
             BorderSizePixel = 0,
             Active = true,
             ClipsDescendants = false,
-        }), 8)
+        }), 6)
+        stroke(frame, 0.45)
+        return frame
     end
 
     -- [M] CÔNG TẮC ON/OFF HOÀN TOÀN TĨNH (KHÔNG DÙNG TWEEN)
     -- OFF: nền C.track (tối), núm trắng nằm bên TRÁI tại (3, 3), state = false
-    -- ON:  nền C.on (sáng), núm trắng nằm bên PHẢI tại (41, 3), state = true
+    -- ON:  nền C.on (sáng), núm trắng nằm bên PHẢI tại (39, 3), state = true
     -- Vị trí và màu sắc cập nhật tức thời bằng gán thuộc tính trực tiếp khi click
     local function toggleItem(parent, text, readValue, saveValue)
-        local row = itemFrame(parent, 49)
+        local row = itemFrame(parent, 44)
+
+        local rowButton = new("TextButton", row, {
+            Name = "RowClickArea",
+            Size = UDim2.new(1, 0, 1, 0),
+            Position = UDim2.fromOffset(0, 0),
+            BackgroundTransparency = 1,
+            Text = "",
+            AutoButtonColor = false,
+            Active = true,
+            Selectable = false,
+            ZIndex = 1,
+        })
+
         label(row, text, {
-            Position = UDim2.fromOffset(17, 0),
-            Size = UDim2.new(1, -112, 1, 0),
-            TextSize = 16,
+            Position = UDim2.fromOffset(14, 0),
+            Size = UDim2.new(1, -96, 1, 0),
+            Font = Enum.Font.GothamMedium,
+            TextSize = 14,
+            TextColor3 = C.silver,
+            ZIndex = 2,
         })
 
         local track = corner(new("TextButton", row, {
             Name = "ToggleTrack",
             AnchorPoint = Vector2.new(1, 0.5),
-            Position = UDim2.new(1, -18, 0.5, 0),
-            Size = UDim2.fromOffset(67, 29),
+            Position = UDim2.new(1, -14, 0.5, 0),
+            Size = UDim2.fromOffset(62, 26),
             BackgroundColor3 = C.track,
             BorderSizePixel = 0,
             Text = "",
             AutoButtonColor = false,
             Active = true,
             Selectable = false,
-        }), 9)
+            ZIndex = 3,
+        }), 8)
         stroke(track, 0.33)
 
         local knob = corner(new("Frame", track, {
             Name = "ToggleKnob",
-            Size = UDim2.fromOffset(23, 23),
+            Size = UDim2.fromOffset(20, 20),
             Position = UDim2.fromOffset(3, 3),
             BackgroundColor3 = C.silver,
             BorderSizePixel = 0,
             Active = false,
-        }), 7)
+            ZIndex = 4,
+        }), 6)
 
         local function redraw()
             local value = (readValue() == true)
             track.BackgroundColor3 = value and C.on or C.track
-            knob.Position = value and UDim2.fromOffset(41, 3) or UDim2.fromOffset(3, 3)
+            knob.Position = value and UDim2.fromOffset(39, 3) or UDim2.fromOffset(3, 3)
             knob.BackgroundColor3 = value and C.white or C.silver
         end
 
         redraw()
 
-        track.MouseButton1Click:Connect(function()
+        local function triggerToggle()
             local current = (readValue() == true)
             saveValue(not current)
             redraw()
-        end)
+        end
+
+        rowButton.MouseButton1Click:Connect(triggerToggle)
+        track.MouseButton1Click:Connect(triggerToggle)
 
         return row
     end
 
     local toggleHandlers = {}
 
-    local function stateToggle(parent, text, key)
+    local function stateToggle(parent, text, key, onChange)
         return toggleItem(parent, text, function()
             return state[key]
         end, function(value)
             state[key] = value
-            if type(toggleHandlers[key]) == "function" then
-                toggleHandlers[key](value)
+            if type(onChange) == "function" then
+                pcall(onChange, value)
+            end
+            local handler = toggleHandlers[key]
+            if type(handler) == "table" then
+                for _, h in ipairs(handler) do pcall(h, value) end
+            elseif type(handler) == "function" then
+                handler(value)
             else
                 print("[LotusHub UI] " .. key .. " = " .. tostring(value) .. " (chỉ UI)")
             end
@@ -520,10 +552,11 @@ function Menu.Create(ctx)
             TextSize = 19,
         })
 
-        local arrow = label(button, expanded[key] and "⌄" or "›", {
+        local arrow = label(button, expanded[key] and "v" or "›", {
             Position = UDim2.new(1, -48, 0, 0),
             Size = UDim2.fromOffset(35, 48),
-            TextSize = 28,
+            TextSize = 18,
+            Font = Enum.Font.GothamBold,
             TextXAlignment = Enum.TextXAlignment.Center,
         })
 
@@ -536,14 +569,19 @@ function Menu.Create(ctx)
             Visible = expanded[key] == true,
         })
         local contentsLayout = vertical(contents, 6)
-        contentsLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
-        new("UIPadding", contents, { PaddingTop = UDim.new(0, 2) })
+        contentsLayout.HorizontalAlignment = Enum.HorizontalAlignment.Right
+        new("UIPadding", contents, {
+            PaddingTop = UDim.new(0, 4),
+            PaddingBottom = UDim.new(0, 4),
+            PaddingLeft = UDim.new(0, 18),
+            PaddingRight = UDim.new(0, 2),
+        })
 
         button.MouseButton1Click:Connect(function()
             local isOpen = not (expanded[key] == true)
             expanded[key] = isOpen
             contents.Visible = isOpen
-            arrow.Text = isOpen and "⌄" or "›"
+            arrow.Text = isOpen and "v" or "›"
         end)
 
         return contents
@@ -1053,7 +1091,13 @@ function Menu.Create(ctx)
 
     function controller:SetToggleHandler(key, fn)
         assert(type(key) == "string" and type(fn) == "function")
-        toggleHandlers[key] = fn
+        if not toggleHandlers[key] then
+            toggleHandlers[key] = fn
+        elseif type(toggleHandlers[key]) == "function" then
+            toggleHandlers[key] = { toggleHandlers[key], fn }
+        elseif type(toggleHandlers[key]) == "table" then
+            table.insert(toggleHandlers[key], fn)
+        end
     end
 
     function controller:GetState()
@@ -1244,8 +1288,8 @@ function Gameplay.Init(ctx, ui)
 
     -- [2] Trạng thái nhóm gập/mở (không tự thay đổi khi chuyển tab).
     local defaultExpanded = {
-        Match = true,
-        Replay = true,
+        Match = false,
+        Replay = false,
         Failsafe = false,
         BoostPerformance = false,
     }
@@ -1263,18 +1307,43 @@ function Gameplay.Init(ctx, ui)
     -- [4] Hàm dựng nội dung tab Gameplay.
     local function buildGameplay()
         -- Nhóm MATCH: Auto Startgame và Auto Active Auto Play là hai toggle riêng.
-        local match = section(scroll, "Match", "Match", true)
+        local match = section(scroll, "Match", "Match", false)
         stateToggle(match, "Auto Startgame", "AutoStartgame")
         stateToggle(match, "Auto Active Auto Play", "AutoActiveAutoPlay")
 
         -- Nhóm REPLAY: giữ Auto Replay và tùy chọn về Lobby sau N lần.
-        local replay = section(scroll, "Replay", "Replay", true)
-        stateToggle(replay, "Auto Replay", "AutoReplay")
-        stateToggle(replay, "Teleport to lobby after N replays", "ReplayLimitEnabled")
-        sliderItem(replay, "Replay count (N)", state, "ReplayLimit", 1, 100, "")
+        local replay = section(scroll, "Replay", "Replay", false)
+        local autoRepToggle = stateToggle(replay, "Auto Replay", "AutoReplay")
+        autoRepToggle.LayoutOrder = 1
+
+        local replaySub
+        local teleToggle = stateToggle(replay, "Teleport to lobby after N replays", "ReplayLimitEnabled", function(enabled)
+            if replaySub then replaySub.Visible = (enabled == true) end
+        end)
+        teleToggle.LayoutOrder = 2
+
+        -- Khung chứa con thụt lề cho Teleport to lobby after N replays (nằm NGAY DƯỚI Teleport to lobby)
+        replaySub = Instance.new("Frame")
+        replaySub.Name = "ReplayLimitSubGroup"
+        replaySub.LayoutOrder = 3
+        replaySub.Size = UDim2.new(1, 0, 0, 0)
+        replaySub.AutomaticSize = Enum.AutomaticSize.Y
+        replaySub.BackgroundTransparency = 1
+        replaySub.Visible = (state.ReplayLimitEnabled == true)
+        replaySub.Parent = replay
+        local subLayout = Instance.new("UIListLayout")
+        subLayout.SortOrder = Enum.SortOrder.LayoutOrder
+        subLayout.Padding = UDim.new(0, 6)
+        subLayout.Parent = replaySub
+        local subPadding = Instance.new("UIPadding")
+        subPadding.PaddingLeft = UDim.new(0, 18)
+        subPadding.PaddingRight = UDim.new(0, 2)
+        subPadding.Parent = replaySub
+
+        sliderItem(replaySub, "Replay count (N)", state, "ReplayLimit", 1, 100, "")
 
         -- [REPLAY STATUS] Hiển thị đếm + nút Reset
-        local progressRow = infoItem(replay, "Đã Replay: 0 / " .. tostring(state.ReplayLimit))
+        local progressRow = infoItem(replaySub, "Đã Replay: 0 / " .. tostring(state.ReplayLimit))
         local progressText = progressRow:FindFirstChildWhichIsA("TextLabel")
         if progressText then
             progressText.Size = UDim2.new(1, -140, 1, -6)
@@ -1375,8 +1444,8 @@ function Modifiers.Init(ctx, ui)
 
     -- [2] Trạng thái nhóm gập/mở mặc định trong tab Modifiers
     local defaultExpanded = {
-        AutoPick = true,
-        Restart = true,
+        AutoPick = false,
+        Restart = false,
     }
     for key, value in pairs(defaultExpanded) do
         if ctx.expanded[key] == nil then ctx.expanded[key] = value end
@@ -1415,21 +1484,44 @@ function Modifiers.Init(ctx, ui)
         -- ====================================================================
         -- 1. NHÓM AUTO PICK MODIFIERS
         -- ====================================================================
-        local pickSection = section(scroll, "Auto Pick Modifiers", "AutoPick", true)
-        stateToggle(pickSection, "Auto Pick Modifiers", "AutoPickModifiers")
+        local pickSection = section(scroll, "AutoPick", "AutoPick", false)
+
+        local pickSub
+        local pickToggle = stateToggle(pickSection, "Auto Pick Modifiers", "AutoPickModifiers", function(enabled)
+            if pickSub then pickSub.Visible = (enabled == true) end
+        end)
+        pickToggle.LayoutOrder = 1
+
+        -- Khung chứa con thụt lề cho bảng danh sách AutoPick (nằm NGAY DƯỚI Auto Pick Modifiers)
+        pickSub = Instance.new("Frame")
+        pickSub.Name = "AutoPickSubGroup"
+        pickSub.LayoutOrder = 2
+        pickSub.Size = UDim2.new(1, 0, 0, 0)
+        pickSub.AutomaticSize = Enum.AutomaticSize.Y
+        pickSub.BackgroundTransparency = 1
+        pickSub.Visible = (state.AutoPickModifiers == true)
+        pickSub.Parent = pickSection
+        local psPadding = Instance.new("UIPadding")
+        psPadding.PaddingLeft = UDim.new(0, 18)
+        psPadding.PaddingRight = UDim.new(0, 2)
+        psPadding.Parent = pickSub
 
         local modTableContainer = Instance.new("Frame")
         modTableContainer.Name = "ModifierTableContainer"
-        modTableContainer.LayoutOrder = #pickSection:GetChildren()
+        modTableContainer.LayoutOrder = 1
         modTableContainer.Size = UDim2.new(1, 0, 0, 260)
-        modTableContainer.BackgroundColor3 = C.row
-        modTableContainer.BackgroundTransparency = 0.26
+        modTableContainer.BackgroundColor3 = C.subRow or Color3.fromRGB(40, 42, 47)
+        modTableContainer.BackgroundTransparency = 0.32
         modTableContainer.BorderSizePixel = 0
         modTableContainer.Active = true
-        modTableContainer.Parent = pickSection
+        modTableContainer.Parent = pickSub
         local mtcCorner = Instance.new("UICorner")
         mtcCorner.CornerRadius = UDim.new(0, 8)
         mtcCorner.Parent = modTableContainer
+        local mtcStroke = Instance.new("UIStroke")
+        mtcStroke.Color = Color3.fromRGB(70, 75, 84)
+        mtcStroke.Transparency = 0.45
+        mtcStroke.Parent = modTableContainer
 
         local modTableHeader = Instance.new("TextLabel")
         modTableHeader.Size = UDim2.new(1, -24, 0, 26)
@@ -1633,24 +1725,69 @@ function Modifiers.Init(ctx, ui)
         -- ====================================================================
         -- 2. NHÓM RESTART (CON CỦA MODIFIERS)
         -- ====================================================================
-        local restartSection = section(scroll, "Restart", "Restart", true)
-        stateToggle(restartSection, "Auto Restart After Waves", "RestartAfterWavesEnabled")
-        sliderItem(restartSection, "Restart at wave", state, "RestartAfterWaves", 1, 200, "")
-        stateToggle(restartSection, "Auto Restart If Don't Have Modifier", "RestartIfMissingModifier")
+        local restartSection = section(scroll, "Restart", "Restart", false)
+
+        -- 1. Mục cha: Auto Restart After Waves
+        local wavesSub
+        local wavesToggle = stateToggle(restartSection, "Auto Restart After Waves", "RestartAfterWavesEnabled", function(enabled)
+            if wavesSub then wavesSub.Visible = (enabled == true) end
+        end)
+        wavesToggle.LayoutOrder = 1
+
+        -- 1.1 Khung con thụt lề nằm NGAY DƯỚI Auto Restart After Waves
+        wavesSub = Instance.new("Frame")
+        wavesSub.Name = "RestartWavesSubGroup"
+        wavesSub.LayoutOrder = 2
+        wavesSub.Size = UDim2.new(1, 0, 0, 0)
+        wavesSub.AutomaticSize = Enum.AutomaticSize.Y
+        wavesSub.BackgroundTransparency = 1
+        wavesSub.Visible = (state.RestartAfterWavesEnabled == true)
+        wavesSub.Parent = restartSection
+        local wsPadding = Instance.new("UIPadding")
+        wsPadding.PaddingLeft = UDim.new(0, 18)
+        wsPadding.PaddingRight = UDim.new(0, 2)
+        wsPadding.Parent = wavesSub
+
+        sliderItem(wavesSub, "Restart at wave", state, "RestartAfterWaves", 1, 200, "")
+
+        -- 2. Mục cha: Auto Restart If Don't Have Modifier
+        local missingModSub
+        local missingModToggle = stateToggle(restartSection, "Auto Restart If Don't Have Modifier", "RestartIfMissingModifier", function(enabled)
+            if missingModSub then missingModSub.Visible = (enabled == true) end
+        end)
+        missingModToggle.LayoutOrder = 3
+
+        -- 2.1 Khung con thụt lề nằm NGAY DƯỚI Auto Restart If Don't Have Modifier
+        missingModSub = Instance.new("Frame")
+        missingModSub.Name = "RestartMissingModSubGroup"
+        missingModSub.LayoutOrder = 4
+        missingModSub.Size = UDim2.new(1, 0, 0, 0)
+        missingModSub.AutomaticSize = Enum.AutomaticSize.Y
+        missingModSub.BackgroundTransparency = 1
+        missingModSub.Visible = (state.RestartIfMissingModifier == true)
+        missingModSub.Parent = restartSection
+        local mmPadding = Instance.new("UIPadding")
+        mmPadding.PaddingLeft = UDim.new(0, 18)
+        mmPadding.PaddingRight = UDim.new(0, 2)
+        mmPadding.Parent = missingModSub
 
         -- [BẢNG MODIFIER ĐỂ CHỌN MODIFIER YÊU CẦU]
         local restartTableContainer = Instance.new("Frame")
         restartTableContainer.Name = "RestartModifierTableContainer"
-        restartTableContainer.LayoutOrder = #restartSection:GetChildren()
+        restartTableContainer.LayoutOrder = 1
         restartTableContainer.Size = UDim2.new(1, 0, 0, 220)
-        restartTableContainer.BackgroundColor3 = C.row
-        restartTableContainer.BackgroundTransparency = 0.26
+        restartTableContainer.BackgroundColor3 = C.subRow or Color3.fromRGB(40, 42, 47)
+        restartTableContainer.BackgroundTransparency = 0.32
         restartTableContainer.BorderSizePixel = 0
         restartTableContainer.Active = true
-        restartTableContainer.Parent = restartSection
+        restartTableContainer.Parent = missingModSub
         local rtcCorner = Instance.new("UICorner")
         rtcCorner.CornerRadius = UDim.new(0, 8)
         rtcCorner.Parent = restartTableContainer
+        local rtcStroke = Instance.new("UIStroke")
+        rtcStroke.Color = Color3.fromRGB(70, 75, 84)
+        rtcStroke.Transparency = 0.45
+        rtcStroke.Parent = restartTableContainer
 
         -- Tiêu đề bảng
         local restartTableHeader = Instance.new("TextLabel")
@@ -1815,8 +1952,8 @@ function Gamemode.Init(ctx, ui)
 
     -- [2] Trạng thái mở rộng nhóm mặc định
     local defaultExpanded = {
-        GrandPrix = true,
-        TrailOfTheSaint = true,
+        GrandPrix = false,
+        TrailOfTheSaint = false,
     }
     for key, value in pairs(defaultExpanded) do
         if ctx.expanded[key] == nil then ctx.expanded[key] = value end
@@ -1845,7 +1982,7 @@ function Gamemode.Init(ctx, ui)
         -- ====================================================================
         -- 1. NHÓM GRAND PRIX
         -- ====================================================================
-        local grandPrixSection = section(scroll, "GrandPrix", "Grand Prix", true)
+        local grandPrixSection = section(scroll, "GrandPrix", "Grand Prix", false)
         stateToggle(grandPrixSection, "Auto join Grand Prix", "AutoJoinGrandPrix")
         stateToggle(grandPrixSection, "Auto Horse Racing", "AutoHorseRacing")
         infoItem(grandPrixSection, "Grand Prix: Tự động xác nhận Mount Picker và đua ngựa autopilot 1000 spd.")
@@ -1853,22 +1990,45 @@ function Gamemode.Init(ctx, ui)
         -- ====================================================================
         -- 2. NHÓM TRAIL OF THE SAINT
         -- ====================================================================
-        local saintSection = section(scroll, "TrailOfTheSaint", "Trail Of The Saint", true)
-        stateToggle(saintSection, "Auto Trial Of The Saint", "AutoTrialOfTheSaint")
+        local saintSection = section(scroll, "TrailOfTheSaint", "Trail Of The Saint", false)
+
+        local saintSub
+        local saintToggle = stateToggle(saintSection, "Auto Trial Of The Saint", "AutoTrialOfTheSaint", function(enabled)
+            if saintSub then saintSub.Visible = (enabled == true) end
+        end)
+        saintToggle.LayoutOrder = 1
+
+        -- Khung chứa con thụt lề cho bảng chọn Ending của Trail Of The Saint (nằm NGAY DƯỚI Auto Trial Of The Saint)
+        saintSub = Instance.new("Frame")
+        saintSub.Name = "TrailSaintSubGroup"
+        saintSub.LayoutOrder = 2
+        saintSub.Size = UDim2.new(1, 0, 0, 0)
+        saintSub.AutomaticSize = Enum.AutomaticSize.Y
+        saintSub.BackgroundTransparency = 1
+        saintSub.Visible = (state.AutoTrialOfTheSaint == true)
+        saintSub.Parent = saintSection
+        local ssPadding = Instance.new("UIPadding")
+        ssPadding.PaddingLeft = UDim.new(0, 18)
+        ssPadding.PaddingRight = UDim.new(0, 2)
+        ssPadding.Parent = saintSub
 
         -- [BẢNG CHỌN GIỮA CÁC ENDING (Tương tự bảng Modifier)]
         local endingContainer = Instance.new("Frame")
         endingContainer.Name = "TrialEndingContainer"
-        endingContainer.LayoutOrder = #saintSection:GetChildren()
+        endingContainer.LayoutOrder = 1
         endingContainer.Size = UDim2.new(1, 0, 0, 140)
-        endingContainer.BackgroundColor3 = C.row
-        endingContainer.BackgroundTransparency = 0.26
+        endingContainer.BackgroundColor3 = C.subRow or Color3.fromRGB(40, 42, 47)
+        endingContainer.BackgroundTransparency = 0.32
         endingContainer.BorderSizePixel = 0
         endingContainer.Active = true
-        endingContainer.Parent = saintSection
+        endingContainer.Parent = saintSub
         local ecCorner = Instance.new("UICorner")
         ecCorner.CornerRadius = UDim.new(0, 8)
         ecCorner.Parent = endingContainer
+        local ecStroke = Instance.new("UIStroke")
+        ecStroke.Color = Color3.fromRGB(70, 75, 84)
+        ecStroke.Transparency = 0.45
+        ecStroke.Parent = endingContainer
 
         local ecHeader = Instance.new("TextLabel")
         ecHeader.Size = UDim2.new(1, -24, 0, 26)
