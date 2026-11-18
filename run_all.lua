@@ -2,16 +2,31 @@
 --[[
     LOTUSHUB MODULAR / run_all.lua — FILE KHỞI ĐỘNG DUY NHẤT.
 
-    Import lần lượt: Menu.lua => Gameplay.lua => Gameplay/Match.lua.
-    Các module không phải Script/ModuleScript Roblox; đây là file .lua
-    trên ổ lưu trữ executor, nạp bằng loadstring(readfile(...)).
-    Nếu executor KHÔNG hỗ trợ readfile, dùng run_all_standalone.lua.
+    Import lần lượt:
+      - Menu
+      - ModifierConfig
+      - Gameplay
+      - Modifiers
+      - Gamemode (Grand Prix & Trail Of The Saint)
+      - Workers: Match, Replay, BoostPerformance, AutoPick, Restart, GrandPrix, TrailOfTheSaint
 
-    GIỮ CẤU TRÚC ZIP:
+    GIỮ CẤU TRÚC:
       LotusHub/run_all.lua
       LotusHub/modules/Menu.lua
       LotusHub/modules/Gameplay.lua
+      LotusHub/modules/Modifiers.lua
+      LotusHub/modules/Gamemode.lua
       LotusHub/modules/Gameplay/Match.lua
+      LotusHub/modules/Gameplay/Replay.lua
+      LotusHub/modules/Gameplay/BoostPerformance.lua
+      LotusHub/modules/Modifiers/ModifierConfig.lua
+      LotusHub/modules/Modifiers/AutoPick.lua
+      LotusHub/modules/Modifiers/Restart/Restart.lua
+      LotusHub/modules/Modifiers/Restart/RestartAfterWaves.lua
+      LotusHub/modules/Modifiers/Restart/RestartIfMissingModifier.lua
+      LotusHub/modules/Gamemode/Grand Prix/Auto join Grand Prix.lua
+      LotusHub/modules/Gamemode/Grand Prix/Auto Horse Racing.lua
+      LotusHub/modules/Gamemode/Trail Of The Saint/Auto Trial Of The Saint.lua
 ]]
 
 local env = ((type(getgenv) == "function") and getgenv()) or _G
@@ -22,9 +37,19 @@ if not player then error("[LotusHub] LocalPlayer chưa sẵn sàng") end
 -- Chỉ nạp các module trong danh sách, không tải mã bên ngoài.
 local MODULE_PATHS = {
     Menu = "modules/Menu.lua",
+    ModifierConfig = "modules/Modifiers/ModifierConfig.lua",
     Gameplay = "modules/Gameplay.lua",
     Match = "modules/Gameplay/Match.lua",
     Replay = "modules/Gameplay/Replay.lua",
+    BoostPerformance = "modules/Gameplay/BoostPerformance.lua",
+    Modifiers = "modules/Modifiers.lua",
+    AutoPick = "modules/Modifiers/AutoPick.lua",
+    RestartAfterWaves = "modules/Modifiers/Restart/RestartAfterWaves.lua",
+    RestartIfMissingModifier = "modules/Modifiers/Restart/RestartIfMissingModifier.lua",
+    Gamemode = "modules/Gamemode.lua",
+    AutoJoinGrandPrix = "modules/Gamemode/Grand Prix/Auto join Grand Prix.lua",
+    AutoHorseRacing = "modules/Gamemode/Grand Prix/Auto Horse Racing.lua",
+    AutoTrialOfTheSaint = "modules/Gamemode/Trail Of The Saint/Auto Trial Of The Saint.lua",
 }
 
 -- [IMPORT] Nếu executor lưu file trong thư mục workspace/LotusHub,
@@ -58,9 +83,19 @@ end
 
 -- Import TRƯỚC KHI đóng UI cũ: nếu thiếu file, UI đang dùng không mất.
 local Menu = loadModule(MODULE_PATHS.Menu)
+local ModifierConfig = loadModule(MODULE_PATHS.ModifierConfig)
 local Gameplay = loadModule(MODULE_PATHS.Gameplay)
+local Modifiers = loadModule(MODULE_PATHS.Modifiers)
+local Gamemode = loadModule(MODULE_PATHS.Gamemode)
 local Match = loadModule(MODULE_PATHS.Match)
 local Replay = loadModule(MODULE_PATHS.Replay)
+local BoostPerformance = loadModule(MODULE_PATHS.BoostPerformance)
+local AutoPick = loadModule(MODULE_PATHS.AutoPick)
+local RestartAfterWaves = loadModule(MODULE_PATHS.RestartAfterWaves)
+local RestartIfMissingModifier = loadModule(MODULE_PATHS.RestartIfMissingModifier)
+local AutoJoinGrandPrix = loadModule(MODULE_PATHS.AutoJoinGrandPrix)
+local AutoHorseRacing = loadModule(MODULE_PATHS.AutoHorseRacing)
+local AutoTrialOfTheSaint = loadModule(MODULE_PATHS.AutoTrialOfTheSaint)
 
 -- [START] Chỉ khi import xong mới dọn phiên cũ, tránh trùng worker/GUI.
 if type(env.LotusHubUI) == "table" and type(env.LotusHubUI.Destroy) == "function" then
@@ -75,7 +110,8 @@ local ctx = {
     playerGui = playerGui,
     state = {},
     expanded = {},
-    knownModifiers = {}, -- MISSING: không tự bịa modifier.
+    knownModifiers = {},
+    ModifierConfig = ModifierConfig,
     connections = {},
     alive = true,
     screen = nil,
@@ -102,13 +138,23 @@ function ctx:Destroy()
     if self.env.LotusHubUI == self.ui then self.env.LotusHubUI = nil end
 end
 
--- [GẮN MODULE] Lần lượt tạo UI, đăng ký Gameplay, nối Match vào toggle.
+-- [GẮN MODULE] Lần lượt tạo UI, đăng ký Gameplay, Modifiers & Gamemode, nối Match, Replay, Boost, AutoPick, Restart, GrandPrix.
 local ok, err = pcall(function()
     local ui = Menu.Create(ctx)
     ctx.ui = ui
+    ModifierConfig.Init(ctx, ui)
     Gameplay.Init(ctx, ui)
+    Modifiers.Init(ctx, ui)
+    Gamemode.Init(ctx, ui)
     Match.Init(ctx, ui)
     Replay.Init(ctx, ui)
+    BoostPerformance.Init(ctx, ui)
+    AutoPick.Init(ctx, ui)
+    RestartAfterWaves.Init(ctx, ui)
+    RestartIfMissingModifier.Init(ctx, ui)
+    AutoJoinGrandPrix.Init(ctx, ui)
+    AutoHorseRacing.Init(ctx, ui)
+    AutoTrialOfTheSaint.Init(ctx, ui)
     env.LotusHubUI = ui -- API tương thích bản cũ.
     ui:ShowTab("Gameplay")
 end)
@@ -118,4 +164,4 @@ if not ok then
     error("[LotusHub] Khởi động thất bại: " .. tostring(err))
 end
 
-print("[LotusHub Modular] Đã nạp Menu + Gameplay + Match V3 + Replay. Các tính năng khác chỉ là UI.")
+print("[LotusHub Modular] Đã nạp thành công: Menu + Gameplay + Modifiers + Gamemode (Grand Prix & Trail Of The Saint).")

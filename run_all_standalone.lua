@@ -1,6 +1,10 @@
 --[[
     LOTUSHUB / run_all_standalone.lua — SCRIPT CHẠY ĐƠN FILE.
-    TỰ ĐỘNG GỘP TỪ: run_all.lua + Menu + Gameplay + Match + Replay.
+    TỰ ĐỘNG GỘP TỪ:
+      - Menu (Zero-animation, static buttons)
+      - Gameplay (Match, Replay, BoostPerformance)
+      - Modifiers (ModifierConfig, AutoPick, RestartAfterWaves, RestartIfMissingModifier)
+      - Gamemode (Grand Prix, AutoHorseRacing, AutoTrialOfTheSaint)
     Để chỉnh source: sửa file module trong modules/, sau đó chạy scripts/build_standalone.py.
     Không cần readfile, không tự tải bất kỳ dữ liệu mạng nào.
 ]]
@@ -10,35 +14,45 @@ local Modules = {}
 -- BEGIN MODULE Menu
 Modules.Menu = (function()
 --[[
-    LotusHub / modules/Menu.lua — UI dùng chung cho mọi tab.
-    LẤY TỪ FILE Menu.lua NGƯỜI DÙNG CUNG CẤP (09/11/2026).
-    Chỉ chịu trách nhiệm VẼ GIAO DIỆN, nhận click và chuyển callback.
-    KHÔNG trực tiếp FireServer hoặc chứa logic riêng của Gameplay.
-
-    CÁCH THÊM TAB: gọi ui:RegisterTab("Tên", function(ui) ... end)
-    CÁCH BẮT TOGGLE: ui:SetToggleHandler("StateKey", function(enabled) ... end)
-    Không thực thi file này độc lập; run_all.lua sẽ nạp module.
+    LotusHub / modules/Menu.lua — REBUILD TOÀN BỘ GIAO DIỆN MENU.
+    Kiến trúc UI được tái cấu trúc hoàn chỉnh từ đầu:
+    1. KHU VỰC ĐIỀU KHIỂN GÓC PHẢI (TopControls):
+       - Tách biệt hoàn toàn khỏi Header và các label tự co giãn.
+       - Neo cố định tuyệt đối ở góc trên-phải của Main Frame (AnchorPoint 1, 0).
+       - Hai nút Minimize (−) và Close (×) có kích thước 42x34, neo vĩnh viễn theo offset (-84 và -34).
+       - Tuyệt đối KHÔNG có animation, KHÔNG tween, KHÔNG đổi màu, KHÔNG phóng to/thu nhỏ khi hover/click.
+    2. CÔNG TẮC ON/OFF (toggleItem):
+       - Hoạt động theo cơ chế toggle switch truyền thống nhưng không dùng TweenService.
+       - OFF: Nền tối (C.track), núm trắng nằm bên TRÁI (3, 3), state = false.
+       - ON: Nền sáng (C.on), núm trắng nằm bên PHẢI (41, 3), state = true.
+       - Chuyển đổi vị trí và màu sắc tức thì khi click, gọi đúng handler, không có animation trung gian.
+    3. HỆ THỐNG NÚT BẤM TOÀN DIỆN:
+       - Tất cả TextButton đều có AutoButtonColor = false, loại bỏ hoàn toàn hiện tượng lún/nhún/dịch của Roblox.
+       - Các section đóng/mở tức thì, slider kéo mượt mà, sidebar tab chuyển tức thì.
+    4. BẢO TOÀN VÒNG ĐỜI & API:
+       - Tương thích 100% với Gameplay.lua, Match.lua, Replay.lua, BoostPerformance.lua.
+       - Hỗ trợ đầy đủ RegisterTab, ShowTab, SetToggleHandler, GetState, Destroy.
 ]]
 local Menu = {}
 
 function Menu.Create(ctx)
     local UserInputService = game:GetService("UserInputService")
+    local ContextActionService = game:GetService("ContextActionService")
+    local Players = game:GetService("Players")
     local Workspace = game:GetService("Workspace")
+    local localPlayer = Players.LocalPlayer
     local playerGui = ctx.playerGui
     local env = ctx.env
     local state = ctx.state
     local expanded = ctx.expanded
-    local controller -- được gán ở cuối module, xử lý tab và Destroy.
+    local controller
 
     -- Bọc Connect để run_all có thể ngắt toàn bộ khi đóng/Execute lại.
     local function connect(signal, callback)
         return ctx:Connect(signal, callback)
     end
 
-    -- [C] BẢNG MÀU -- NƠI DỄ CHỈNH GIAO DIỆN NHẤT
-    -- Ví dụ muốn nền sáng hơn: đổi `panel = Color3.fromRGB(11, 13, 17)`.
-    -- `row` là nền các mục, `active` là màu mục sidebar được chọn,
-    -- `silver`/`white` là chữ sáng, `muted` là chữ phụ, `on` là toggle ON.
+    -- [C] BẢNG MÀU CHUẨN KIM LOẠI BẠC TỐI CỦA LOTUSHUB
     local C = {
         panel = Color3.fromRGB(11, 13, 17),
         panelBorder = Color3.fromRGB(100, 105, 111),
@@ -52,10 +66,7 @@ function Menu.Create(ctx)
         white = Color3.fromRGB(255, 255, 255),
     }
 
-    -- [G] CÁC HÀM TẠO GUI DÙNG LẠI NHIỀU LẦN
-    -- new(...): tạo Instance, gán thuộc tính trong props, rồi gắn vào parent.
-    -- corner(...): tạo bo góc; stroke(...): tạo viền; vertical(...): xếp dọc.
-    -- label(...): tạo chữ với bộ kiểu mặc định để đỡ lặp code.
+    -- [G] CÁC HÀM TẠO GUI CƠ BẢN
     local function new(className, parent, props)
         local obj = Instance.new(className)
         for key, value in pairs(props or {}) do
@@ -106,9 +117,6 @@ function Menu.Create(ctx)
     end
 
     -- [H] CỬA SỔ CHÍNH
-    -- ScreenGui là lớp hiển thị UI bên trong PlayerGui.
-    -- ResetOnSpawn=false: UI không tự mất mỗi lần nhân vật respawn.
-    -- DisplayOrder càng lớn thì UI thường càng được vẽ ở lớp phía trước.
     local screen = new("ScreenGui", playerGui, {
         Name = "LotusHub_Gameplay_UI_Demo",
         IgnoreGuiInset = true,
@@ -117,10 +125,7 @@ function Menu.Create(ctx)
         ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
     })
 
-    -- Frame `main` là toàn bộ bảng LotusHub.
-    -- Position (0.5,0.5) kết hợp AnchorPoint (0.5,0.5) đặt giữa màn hình.
-    -- Size 940x590 là kích thước CƠ SỞ (pixel), còn UIScale sẽ co cho mobile.
-    -- BackgroundTransparency 0.17: nền hơi trong suốt; 0 = không trong suốt.
+    -- Khung cửa sổ chính 940x590, vị trí trung tâm màn hình
     local main = corner(new("Frame", screen, {
         Name = "Main",
         AnchorPoint = Vector2.new(0.5, 0.5),
@@ -130,20 +135,106 @@ function Menu.Create(ctx)
         BackgroundColor3 = C.panel,
         BackgroundTransparency = 0.17,
         ClipsDescendants = true,
+        Active = true,
     }), 12)
     stroke(main, 0.48)
 
-    -- UIScale giúp co toàn cửa sổ theo kích thước màn hình, không phải zoom game.
+    -- UIScale phục vụ co giãn responsive trên nhiều độ phân giải
     local uiScale = new("UIScale", main, { Scale = 1 })
 
-    -- [I] THANH TIÊU ĐỀ, LOGO, NÚT THU NHỎ/ĐÓNG
-    -- Đổi chuỗi trong label(header, "LotusHub - Anime Vanguards", ...) để đổi tên.
-    -- `TextSize` tăng/giảm cỡ chữ; các `Position`/`Size` chỉnh bố cục.
+    -- [I] KHU VỰC ĐIỀU KHIỂN CỐ ĐỊNH Ở GÓC PHẢI (TOP CONTROLS)
+    -- Tách biệt hoàn toàn khỏi Header để triệt tiêu 100% hiện tượng dịch chuyển do text hoặc responsive
+    local topControls = new("Frame", main, {
+        Name = "TopControls",
+        AnchorPoint = Vector2.new(1, 0),
+        Position = UDim2.new(1, 0, 0, 0),
+        Size = UDim2.fromOffset(130, 61),
+        BackgroundTransparency = 1,
+        BorderSizePixel = 0,
+        ZIndex = 10,
+        Active = false,
+    })
+
+    local BOX_SIZE = UDim2.fromOffset(42, 34)
+    local TEXT_SIZE = 26
+
+    -- Diagnostic kiểm tra tọa độ tâm (mặc định OFF, bật bằng getgenv().LotusHubDebugButtons = true)
+    local DEBUG_BUTTON_COORDS = (ctx and ctx.debugButtonCoords)
+        or (env and env.LotusHubDebugButtons)
+        or false
+
+    local function createTopBoxButton(name, text, xCenterOffset)
+        -- TextButton dạng hộp phẳng cố định tuyệt đối trong TopControls
+        -- AutoButtonColor = false chặn triệt để hiệu ứng nhún/lún mặc định của Roblox
+        local button = corner(new("TextButton", topControls, {
+            Name = name,
+            Size = BOX_SIZE,
+            AnchorPoint = Vector2.new(0.5, 0.5),
+            Position = UDim2.new(1, xCenterOffset, 0.5, 0),
+            BackgroundColor3 = Color3.fromRGB(38, 41, 46),
+            BackgroundTransparency = 0.25,
+            BorderSizePixel = 0,
+            AutoButtonColor = false,
+            Active = true,
+            Selectable = false,
+            Text = "",
+            ClipsDescendants = false,
+            ZIndex = 11,
+        }), 6)
+
+        -- Viền hộp kim loại bạc cố định
+        stroke(button, 0.45)
+
+        -- Ký tự − hoặc × căn chính giữa, font GothamBold, màu bạc tĩnh, không animation
+        label(button, text, {
+            Position = UDim2.fromOffset(0, 0),
+            Size = UDim2.fromScale(1, 1),
+            Text = text,
+            TextColor3 = C.silver,
+            TextSize = TEXT_SIZE,
+            Font = Enum.Font.GothamBold,
+            TextXAlignment = Enum.TextXAlignment.Center,
+            TextYAlignment = Enum.TextYAlignment.Center,
+            Active = false,
+            ZIndex = 12,
+        })
+
+        if DEBUG_BUTTON_COORDS then
+            local function logButtonState(evt)
+                task.defer(function()
+                    if button and button.Parent then
+                        local ap = button.AbsolutePosition
+                        local as = button.AbsoluteSize
+                        local center = ap + as / 2
+                        print(string.format("[LotusHub Diagnostic] %s:%s | Pos=(%.1f, %.1f) | Size=(%.1f, %.1f) | Center=(%.1f, %.1f) | Scale=%.3f",
+                            name, evt, ap.X, ap.Y, as.X, as.Y, center.X, center.Y, uiScale and uiScale.Scale or 1))
+                    end
+                end)
+            end
+            logButtonState("Init")
+            button.MouseButton1Click:Connect(function()
+                logButtonState("Click")
+            end)
+        end
+
+        return button
+    end
+
+    -- Hai nút nằm cố định theo offset chính xác từ mép phải của cửa sổ:
+    -- CloseButton: tâm cách mép phải 34px (xCenterOffset = -34)
+    -- MinimizeButton: tâm cách mép phải 84px (xCenterOffset = -84)
+    local minimizeButton = createTopBoxButton("MinimizeButton", "−", -84)
+    local closeButton = createTopBoxButton("CloseButton", "×", -34)
+
+    -- [I.1] THANH TIÊU ĐỀ (HEADER) VÀ LOGO
+    -- Header chỉ trải dài đến mép vùng điều khiển (1, -130), không chạm vào hai nút
     local header = new("Frame", main, {
         Name = "TitleBar",
-        Size = UDim2.new(1, 0, 0, 61),
+        Position = UDim2.fromOffset(0, 0),
+        Size = UDim2.new(1, -130, 0, 61),
         BackgroundTransparency = 1,
         Active = true,
+        ZIndex = 5,
     })
 
     label(header, "✿", {
@@ -153,105 +244,76 @@ function Menu.Create(ctx)
         TextSize = 28,
         Font = Enum.Font.GothamBold,
     })
+
     label(header, "LotusHub - Anime Vanguards", {
         Position = UDim2.fromOffset(59, 5),
-        Size = UDim2.new(1, -170, 0, 52),
+        Size = UDim2.fromOffset(290, 52),
         Font = Enum.Font.GothamSemibold,
         TextSize = 23,
     })
 
     label(header, "[Early Access]", {
-        Position = UDim2.fromOffset(350, 6),
-        Size = UDim2.new(1, -170, 0, 52),
+        Position = UDim2.fromOffset(355, 6),
+        Size = UDim2.fromOffset(120, 52),
         Font = Enum.Font.GothamSemibold,
+        TextColor3 = C.muted,
         TextSize = 15,
     })
 
-    local rule = new("Frame", main, {
+    -- Đường kẻ mảnh phân cách thanh tiêu đề và thân menu
+    new("Frame", main, {
+        Name = "Divider",
         Position = UDim2.fromOffset(20, 62),
         Size = UDim2.new(1, -40, 0, 1),
         BackgroundColor3 = C.silver,
         BackgroundTransparency = 0.68,
         BorderSizePixel = 0,
+        ZIndex = 6,
     })
 
-    local function topButton(text, x)
-        return new("TextButton", header, {
-            Size = UDim2.fromOffset(38, 38),
-            Position = UDim2.new(1, x, 0, 10),
-            BackgroundTransparency = 1,
-            Text = text,
-            TextColor3 = C.silver,
-            TextSize = 26,
-            Font = Enum.Font.Gotham,
-            AutoButtonColor = false,
-        })
-    end
-
-    -- Hai nút ở góc phải: dấu trừ thu nhỏ và dấu nhân đóng cửa sổ.
-    local minimizeButton = topButton("−", -86)
-    local closeButton = topButton("×", -46)
-
-
-    -- [I.1] NÚT TRÒN KHI THU NHỎ MENU
-    -- Nút này nằm riêng trong ScreenGui.
-    -- Khi menu mở: nút bị ẩn.
-    -- Khi menu thu nhỏ: nút xuất hiện.
-
+    -- [I.2] NÚT TRÒN KHI THU NHỎ MENU (RESTORE BUBBLE)
     local restoreBubble = new("TextButton", screen, {
         Name = "RestoreBubble",
-
-        -- Kích thước nút tròn (pixel)
         Size = UDim2.fromOffset(60, 60),
-
-        -- Lấy tâm nút làm điểm định vị
         AnchorPoint = Vector2.new(0.5, 0.5),
-
-        -- Màu nền nút
         BackgroundColor3 = C.panel,
         BackgroundTransparency = 0.1,
-
-        -- Biểu tượng giống logo trên header
         Text = "✿",
         TextColor3 = C.silver,
         TextSize = 30,
         Font = Enum.Font.GothamBold,
-
         BorderSizePixel = 0,
-        AutoButtonColor = true,
-
-        -- Ban đầu ẩn vì menu đang mở
+        AutoButtonColor = false,
+        Active = true,
+        Selectable = false,
         Visible = false,
-        ZIndex = 10,
+        ZIndex = 100,
     })
-
-    -- Bo tròn hoàn toàn nút 60x60
-    new("UICorner", restoreBubble, {
-        CornerRadius = UDim.new(1, 0),
-    })
-
-    -- Tạo viền bạc giống giao diện chính
+    new("UICorner", restoreBubble, { CornerRadius = UDim.new(1, 0) })
     stroke(restoreBubble, 0.48)
 
-
-    -- [J] THÂN CỬA SỔ: MENU TRÁI + KHUNG NỘI DUNG PHẢI
-    -- body nằm dưới title bar. sidebar là menu trái.
-    -- sectionTitle là tiêu đề tab hiện tại, scroll là vùng cuộn nội dung.
+    -- [J] THÂN CỬA SỔ: SIDEBAR + VÙNG CUỘN NỘI DUNG
     local body = new("Frame", main, {
         Name = "Body",
         Position = UDim2.fromOffset(0, 66),
         Size = UDim2.new(1, 0, 1, -66),
         BackgroundTransparency = 1,
+        Active = true,
+        ZIndex = 2,
     })
 
     local sidebar = new("Frame", body, {
+        Name = "Sidebar",
         Position = UDim2.fromOffset(18, 23),
         Size = UDim2.fromOffset(224, 442),
         BackgroundTransparency = 1,
+        Active = true,
     })
     vertical(sidebar, 11)
 
+    -- Vạch dọc phân cách sidebar và nội dung
     new("Frame", body, {
+        Name = "SidebarSeparator",
         Position = UDim2.fromOffset(255, 22),
         Size = UDim2.new(0, 1, 1, -70),
         BorderSizePixel = 0,
@@ -260,14 +322,13 @@ function Menu.Create(ctx)
     })
 
     local sectionTitle = label(body, "Gameplay", {
+        Name = "TabTitle",
         Position = UDim2.fromOffset(276, 13),
         Size = UDim2.new(1, -302, 0, 63),
         Font = Enum.Font.GothamBold,
         TextSize = 32,
     })
 
-    -- ScrollingFrame cho phép kéo xuống khi danh sách nhiều hơn chiều cao.
-    -- AutomaticCanvasSize.Y tự nới phần nội dung theo các phần tử con.
     local scroll = new("ScrollingFrame", body, {
         Name = "ContentScroll",
         Position = UDim2.fromOffset(276, 94),
@@ -277,34 +338,33 @@ function Menu.Create(ctx)
         ScrollBarThickness = 3,
         ScrollBarImageColor3 = C.muted,
         AutomaticCanvasSize = Enum.AutomaticSize.Y,
-        CanvasSize = UDim2.new(),
+        CanvasSize = UDim2.new(0, 0, 0, 0),
         ScrollingDirection = Enum.ScrollingDirection.Y,
+        VerticalScrollBarInset = Enum.ScrollBarInset.None,
+        Active = true,
+        Selectable = false,
     })
     vertical(scroll, 11)
     new("UIPadding", scroll, {
         PaddingTop = UDim.new(0, 2),
         PaddingRight = UDim.new(0, 5),
-        PaddingBottom = UDim.new(0, 14),
+        PaddingBottom = UDim.new(0, 10),
     })
 
-    -- Dòng chân trang nhắc người dùng rằng tất cả nút hiện tại chỉ là demo.
-    local footer = label(body, "LotusHub Modular  •  Match v3 tích hợp; mục khác chưa nối", {
-        Position = UDim2.new(0, 276, 1, -37),
-        Size = UDim2.new(1, -304, 0, 24),
-        Font = Enum.Font.Gotham,
-        TextSize = 12,
+    local footer = label(main, "LotusHub Modular · Match v3 tích hợp; mục khác chưa nối", {
+        Position = UDim2.new(0, 20, 1, -25),
+        Size = UDim2.new(1, -40, 0, 20),
         TextColor3 = C.muted,
+        TextSize = 12,
+        TextXAlignment = Enum.TextXAlignment.Center,
     })
 
-    -- [K] DANH SÁCH TAB BÊN TRÁI
-    -- Đổi tên/thứ tự tab tại `tabs`. Để có nội dung mới, thêm xử lý ở showTab().
-    -- Các tab khác ngoài Gameplay hiện chỉ có dòng thông báo (chưa tích hợp).
+    -- [K] HỆ THỐNG TAB VÀ SIDEBAR NÚT ĐIỀU HƯỚNG
     local currentTab = nil
-    local tabs = {} -- Được tạo động khi từng module đăng ký với RegisterTab.
+    local tabs = {}
     local tabBuilders = {}
     local tabButtons = {}
 
-    -- Tạo 1 nút sidebar; stripe là vạch bạc báo tab đang được chọn.
     local function addNavButton(name, order)
         local button = corner(new("TextButton", sidebar, {
             Name = "Tab_" .. name,
@@ -319,7 +379,10 @@ function Menu.Create(ctx)
             Font = Enum.Font.GothamSemibold,
             AutoButtonColor = false,
             BorderSizePixel = 0,
+            Active = true,
+            Selectable = false,
         }), 7)
+
         local stripe = new("Frame", button, {
             Name = "Stripe",
             Position = UDim2.fromOffset(0, 4),
@@ -328,14 +391,11 @@ function Menu.Create(ctx)
             BorderSizePixel = 0,
             Visible = false,
         })
+
         tabButtons[name] = { button = button, stripe = stripe }
         return button
     end
 
-
-    -- [L] KHỐI HIỂN THỊ NỘI DUNG
-    -- Khi chuyển tab, xóa các hàng cũ trong vùng scroll để dựng tab mới.
-    -- UIListLayout và UIPadding không bị xóa vì không phải GuiObject.
     local function clearContent()
         for _, child in ipairs(scroll:GetChildren()) do
             if child:IsA("GuiObject") then
@@ -345,87 +405,22 @@ function Menu.Create(ctx)
         scroll.CanvasPosition = Vector2.zero
     end
 
-    -- section(...): dựng một nhóm gập/mở như Match, Replay, Restart...
-    -- key = khóa trong expanded; displayName = chữ hiện trên giao diện.
-    -- Bấm vào thanh nhóm sẽ đổi expanded[key] giữa true/false.
-    local function section(parent, key, displayName, defaultOpen)
-        if expanded[key] == nil then
-            expanded[key] = defaultOpen
-        end
-
-        local wrapper = new("Frame", parent, {
-            Name = "Section_" .. key,
-            LayoutOrder = #parent:GetChildren(),
-            Size = UDim2.new(1, -1, 0, 0),
-            AutomaticSize = Enum.AutomaticSize.Y,
-            BackgroundTransparency = 1,
-        })
-        vertical(wrapper, 6)
-
-        local button = corner(new("TextButton", wrapper, {
-            LayoutOrder = 1,
-            Size = UDim2.new(1, 0, 0, 49),
-            BackgroundColor3 = C.row,
-            BackgroundTransparency = 0.21,
-            Text = "",
-            AutoButtonColor = false,
-            BorderSizePixel = 0,
-        }), 9)
-        label(button, displayName, {
-            Position = UDim2.fromOffset(17, 0),
-            Size = UDim2.new(1, -76, 1, 0),
-            Font = Enum.Font.GothamSemibold,
-            TextSize = 19,
-        })
-        local arrow = label(button, "⌄", {
-            Position = UDim2.new(1, -48, 0, 0),
-            Size = UDim2.fromOffset(35, 48),
-            TextSize = 28,
-            TextXAlignment = Enum.TextXAlignment.Center,
-        })
-
-        local contents = new("Frame", wrapper, {
-            Name = "Items",
-            LayoutOrder = 2,
-            Size = UDim2.new(1, 0, 0, 0),
-            AutomaticSize = Enum.AutomaticSize.Y,
-            BackgroundTransparency = 1,
-        })
-        vertical(contents, 6)
-        new("UIPadding", contents, {
-            PaddingLeft = UDim.new(0, 12),
-            PaddingRight = UDim.new(0, 8),
-        })
-
-        local function update()
-            contents.Visible = expanded[key]
-            arrow.Text = expanded[key] and "⌄" or "›"
-        end
-        update()
-        button.MouseButton1Click:Connect(function()
-            expanded[key] = not expanded[key]
-            update()
-        end)
-        return contents
-    end
-
-    -- [M] CÁC KIỂU HÀNG DÙNG CHUNG
-    -- itemFrame: nền 1 hàng; toggleItem: công tắc bất kỳ;
-    -- stateToggle: công tắc liên kết trực tiếp vào state[key].
-    -- sliderItem: thanh kéo cập nhật một giá trị số vào tableRef[key].
+    -- [L] CÁC THÀNH PHẦN GIAO DIỆN CHUẨN (UI COMPONENTS)
     local function itemFrame(parent, height)
         return corner(new("Frame", parent, {
-            LayoutOrder = #parent:GetChildren(),
             Size = UDim2.new(1, 0, 0, height or 49),
             BackgroundColor3 = C.row,
             BackgroundTransparency = 0.26,
             BorderSizePixel = 0,
+            Active = true,
+            ClipsDescendants = false,
         }), 8)
     end
 
-    -- toggleItem không tự biết tính năng: chỉ đọc boolean qua readValue()
-    -- và gọi saveValue(newBoolean) khi bấm. Phần `redraw` vẽ màu + núm bật/tắt.
-    -- Do đó có thể dùng toggleItem cho modifier hoặc các trạng thái khác.
+    -- [M] CÔNG TẮC ON/OFF HOÀN TOÀN TĨNH (KHÔNG DÙNG TWEEN)
+    -- OFF: nền C.track (tối), núm trắng nằm bên TRÁI tại (3, 3), state = false
+    -- ON:  nền C.on (sáng), núm trắng nằm bên PHẢI tại (41, 3), state = true
+    -- Vị trí và màu sắc cập nhật tức thời bằng gán thuộc tính trực tiếp khi click
     local function toggleItem(parent, text, readValue, saveValue)
         local row = itemFrame(parent, 49)
         label(row, text, {
@@ -433,8 +428,9 @@ function Menu.Create(ctx)
             Size = UDim2.new(1, -112, 1, 0),
             TextSize = 16,
         })
+
         local track = corner(new("TextButton", row, {
-            Name = "Toggle",
+            Name = "ToggleTrack",
             AnchorPoint = Vector2.new(1, 0.5),
             Position = UDim2.new(1, -18, 0.5, 0),
             Size = UDim2.fromOffset(67, 29),
@@ -442,28 +438,38 @@ function Menu.Create(ctx)
             BorderSizePixel = 0,
             Text = "",
             AutoButtonColor = false,
+            Active = true,
+            Selectable = false,
         }), 9)
         stroke(track, 0.33)
+
         local knob = corner(new("Frame", track, {
+            Name = "ToggleKnob",
             Size = UDim2.fromOffset(23, 23),
             Position = UDim2.fromOffset(3, 3),
             BackgroundColor3 = C.silver,
             BorderSizePixel = 0,
+            Active = false,
         }), 7)
+
         local function redraw()
-            local value = readValue() == true
+            local value = (readValue() == true)
             track.BackgroundColor3 = value and C.on or C.track
             knob.Position = value and UDim2.fromOffset(41, 3) or UDim2.fromOffset(3, 3)
+            knob.BackgroundColor3 = value and C.white or C.silver
         end
+
         redraw()
+
         track.MouseButton1Click:Connect(function()
-            saveValue(not readValue())
+            local current = (readValue() == true)
+            saveValue(not current)
             redraw()
         end)
+
         return row
     end
 
-    -- Mỗi toggle có handler riêng. Không ràng buộc Menu với Gameplay/Match.
     local toggleHandlers = {}
 
     local function stateToggle(parent, text, key)
@@ -479,12 +485,71 @@ function Menu.Create(ctx)
         end)
     end
 
-    -- [N] THANH KÉO (SLIDER)
-    -- minimum/maximum là phạm vi số nguyên; ví dụ 1..100.
-    -- tableRef[key] là nơi lưu giá trị (thường là `state`).
-    -- suffix là chữ ở sau số, ví dụ "m" (phút).
-    -- LƯU Ý: maximum phải lớn hơn minimum vì có phép chia (maximum-minimum).
-    -- `applyPosition` đổi tọa độ chuột/chạm thành giá trị nằm trong phạm vi này.
+    -- [N] NHÓM CHỨC NĂNG CÓ THỂ ĐÓNG/MỞ (SECTION)
+    local function section(parent, key, displayName, defaultOpen)
+        if expanded[key] == nil then
+            expanded[key] = defaultOpen
+        end
+
+        local wrapper = new("Frame", parent, {
+            Name = "Section_" .. key,
+            LayoutOrder = #parent:GetChildren(),
+            Size = UDim2.new(1, 0, 0, 0),
+            AutomaticSize = Enum.AutomaticSize.Y,
+            BackgroundTransparency = 1,
+        })
+        vertical(wrapper, 6)
+
+        local button = corner(new("TextButton", wrapper, {
+            Name = "SectionHeader",
+            LayoutOrder = 1,
+            Size = UDim2.new(1, 0, 0, 49),
+            BackgroundColor3 = C.row,
+            BackgroundTransparency = 0.21,
+            Text = "",
+            AutoButtonColor = false,
+            BorderSizePixel = 0,
+            Active = true,
+            Selectable = false,
+        }), 9)
+
+        label(button, displayName, {
+            Position = UDim2.fromOffset(17, 0),
+            Size = UDim2.new(1, -76, 1, 0),
+            Font = Enum.Font.GothamSemibold,
+            TextSize = 19,
+        })
+
+        local arrow = label(button, expanded[key] and "⌄" or "›", {
+            Position = UDim2.new(1, -48, 0, 0),
+            Size = UDim2.fromOffset(35, 48),
+            TextSize = 28,
+            TextXAlignment = Enum.TextXAlignment.Center,
+        })
+
+        local contents = new("Frame", wrapper, {
+            Name = "Items",
+            LayoutOrder = 2,
+            Size = UDim2.new(1, 0, 0, 0),
+            AutomaticSize = Enum.AutomaticSize.Y,
+            BackgroundTransparency = 1,
+            Visible = expanded[key] == true,
+        })
+        local contentsLayout = vertical(contents, 6)
+        contentsLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+        new("UIPadding", contents, { PaddingTop = UDim.new(0, 2) })
+
+        button.MouseButton1Click:Connect(function()
+            local isOpen = not (expanded[key] == true)
+            expanded[key] = isOpen
+            contents.Visible = isOpen
+            arrow.Text = isOpen and "⌄" or "›"
+        end)
+
+        return contents
+    end
+
+    -- [O] THANH KÉO (SLIDER)
     local function sliderItem(parent, text, tableRef, key, minimum, maximum, suffix)
         local row = itemFrame(parent, 79)
         label(row, text, {
@@ -492,17 +557,20 @@ function Menu.Create(ctx)
             Size = UDim2.new(1, -34, 0, 26),
             TextSize = 16,
         })
+
         local track = corner(new("Frame", row, {
             Position = UDim2.new(0, 26, 0, 53),
             Size = UDim2.new(1, -126, 0, 5),
             BackgroundColor3 = C.track,
             BorderSizePixel = 0,
         }), 3)
+
         local fill = corner(new("Frame", track, {
             Size = UDim2.fromScale(0, 1),
             BackgroundColor3 = C.silver,
             BorderSizePixel = 0,
         }), 3)
+
         local knob = corner(new("Frame", track, {
             AnchorPoint = Vector2.new(0.5, 0.5),
             Position = UDim2.fromScale(0, 0.5),
@@ -510,6 +578,7 @@ function Menu.Create(ctx)
             BackgroundColor3 = C.silver,
             BorderSizePixel = 0,
         }), 10)
+
         local amount = corner(new("Frame", row, {
             AnchorPoint = Vector2.new(1, 0),
             Position = UDim2.new(1, -13, 0, 40),
@@ -518,6 +587,7 @@ function Menu.Create(ctx)
             BackgroundTransparency = 0.53,
             BorderSizePixel = 0,
         }), 6)
+
         local amountLabel = label(amount, "", {
             Size = UDim2.fromScale(1, 1),
             TextSize = 15,
@@ -527,6 +597,7 @@ function Menu.Create(ctx)
 
         local draggingSlider = false
         local touchInput = nil
+
         local function redraw()
             local value = math.clamp(tonumber(tableRef[key]) or minimum, minimum, maximum)
             local fraction = (value - minimum) / (maximum - minimum)
@@ -534,6 +605,7 @@ function Menu.Create(ctx)
             knob.Position = UDim2.fromScale(fraction, 0.5)
             amountLabel.Text = tostring(value) .. (suffix or "")
         end
+
         local function applyPosition(pos)
             local width = track.AbsoluteSize.X
             if width <= 0 then return end
@@ -541,6 +613,7 @@ function Menu.Create(ctx)
             tableRef[key] = math.floor(minimum + fraction * (maximum - minimum) + 0.5)
             redraw()
         end
+
         redraw()
 
         local hitbox = new("TextButton", row, {
@@ -551,7 +624,10 @@ function Menu.Create(ctx)
             Text = "",
             AutoButtonColor = false,
             ZIndex = 4,
+            Active = true,
+            Selectable = false,
         })
+
         hitbox.InputBegan:Connect(function(input)
             if input.UserInputType == Enum.UserInputType.MouseButton1
                 or input.UserInputType == Enum.UserInputType.Touch then
@@ -568,6 +644,7 @@ function Menu.Create(ctx)
                 applyPosition(input.Position)
             end
         end)
+
         local ending = UserInputService.InputEnded:Connect(function(input)
             if input.UserInputType == Enum.UserInputType.MouseButton1
                 or (input.UserInputType == Enum.UserInputType.Touch and input == touchInput) then
@@ -575,14 +652,16 @@ function Menu.Create(ctx)
                 touchInput = nil
             end
         end)
+
         row.Destroying:Connect(function()
             changing:Disconnect()
             ending:Disconnect()
         end)
+
         return row
     end
 
-    -- infoItem: hiển thị lời chú thích/hướng dẫn, không bấm được.
+    -- [P] KHỐI THÔNG TIN / GHI CHÚ
     local function infoItem(parent, text)
         local row = itemFrame(parent, 54)
         label(row, text, {
@@ -596,7 +675,7 @@ function Menu.Create(ctx)
         return row
     end
 
-    -- [P] HỆ THỐNG TAB ĐỘNG: Gameplay/Gamemode,... đều là module riêng.
+    -- [Q] CHUYỂN TAB ĐỘNG
     local function showTab(name)
         local build = tabBuilders[name]
         if not build then
@@ -612,243 +691,324 @@ function Menu.Create(ctx)
             objects.button.TextColor3 = isCurrent and C.white or C.silver
             objects.stripe.Visible = isCurrent
         end
-        build(controller) -- Tất cả nội dung tab được dựng ở module tương ứng.
+        build(controller)
     end
 
-    -- [Q] THU NHỎ MENU THÀNH NÚT TRÒN CÓ THỂ KÉO THẢ
-
-    local minimized = false
-
-    -- [Q.1] CẤU HÌNH KÉO THẢ
-    -- Kéo ít nhất 8 pixel mới tính là di chuyển.
-    -- Giúp phân biệt thao tác bấm và kéo.
-    local DRAG_THRESHOLD = 8
-
+    -- [R] NÚT THU NHỎ / KHÔI PHỤC MENU
     local bubbleDragging = false
+    local bubbleDragStartMouse = nil
+    local bubbleDragStartPos = nil
     local bubbleMoved = false
-    local bubbleTouchInput = nil
-    local bubbleStartInput = nil
-    local bubbleStartPosition = nil
 
-    -- [Q.2] GIỚI HẠN VỊ TRÍ NÚT TRÒN
-    -- Ngăn nút bị kéo ra ngoài màn hình.
-    local function setBubblePosition(x, y)
-        local camera = Workspace.CurrentCamera
-        if not camera then
-            restoreBubble.Position = UDim2.fromOffset(x, y)
-            return
+    connect(restoreBubble.InputBegan, function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+            or input.UserInputType == Enum.UserInputType.Touch then
+            bubbleDragging = true
+            bubbleMoved = false
+            bubbleDragStartMouse = input.Position
+            bubbleDragStartPos = restoreBubble.Position
         end
+    end)
 
-        local viewport = camera.ViewportSize
+    connect(UserInputService.InputChanged, function(input)
+        if not bubbleDragging or not bubbleDragStartMouse or not bubbleDragStartPos then return end
+        if input.UserInputType == Enum.UserInputType.MouseMovement
+            or input.UserInputType == Enum.UserInputType.Touch then
+            local delta = input.Position - bubbleDragStartMouse
+            if not bubbleMoved and delta.Magnitude >= 5 then
+                bubbleMoved = true
+            end
+            if bubbleMoved then
+                local x = math.clamp(bubbleDragStartPos.X.Offset + delta.X, 30, (screen.AbsoluteSize.X or 940) - 30)
+                local y = math.clamp(bubbleDragStartPos.Y.Offset + delta.Y, 30, (screen.AbsoluteSize.Y or 590) - 30)
+                restoreBubble.Position = UDim2.fromOffset(x, y)
+            end
+        end
+    end)
 
-        -- Bán kính nút tròn 60x60
-        local radiusX = restoreBubble.Size.X.Offset / 2
-        local radiusY = restoreBubble.Size.Y.Offset / 2
-
-        -- Giữ toàn bộ nút trong màn hình
-        x = math.clamp(
-            x,
-            radiusX,
-            math.max(radiusX, viewport.X - radiusX)
-        )
-
-        y = math.clamp(
-            y,
-            radiusY,
-            math.max(radiusY, viewport.Y - radiusY)
-        )
-
-        restoreBubble.Position = UDim2.fromOffset(x, y)
+    local function stopBubbleDrag()
+        bubbleDragging = false
+        bubbleDragStartMouse = nil
+        bubbleDragStartPos = nil
+        bubbleMoved = false
     end
 
-    -- [Q.3] BẤM NÚT THU NHỎ TRÊN HEADER
-    minimizeButton.MouseButton1Click:Connect(function()
-        if minimized then return end
-
-        minimized = true
-
-        -- Đưa nút tròn đến vị trí logo trên header
-        setBubblePosition(
-            main.AbsolutePosition.X + 37 * uiScale.Scale,
-            main.AbsolutePosition.Y + 30 * uiScale.Scale
-        )
-
-        -- Ẩn menu, hiện nút tròn
-        main.Visible = false
-        restoreBubble.Visible = true
-    end)
-
-    -- [Q.4] PHÁT HIỆN KHI BẮT ĐẦU KÉO
-    connect(restoreBubble.InputBegan, function(input)
-        local inputType = input.UserInputType
-
-        -- Hỗ trợ chuột PC và cảm ứng điện thoại
-        if inputType ~= Enum.UserInputType.MouseButton1
-            and inputType ~= Enum.UserInputType.Touch then
-            return
-        end
-
-        bubbleDragging = true
-        bubbleMoved = false
-
-        -- Lưu ngón tay đang chạm (nếu dùng mobile)
-        bubbleTouchInput =
-            inputType == Enum.UserInputType.Touch
-            and input or nil
-
-        -- Lưu vị trí khi bắt đầu nhấn
-        bubbleStartInput = Vector2.new(
-            input.Position.X,
-            input.Position.Y
-        )
-
-        -- Lưu vị trí ban đầu của nút tròn
-        bubbleStartPosition = Vector2.new(
-            restoreBubble.Position.X.Offset,
-            restoreBubble.Position.Y.Offset
-        )
-    end)
-
-    -- [Q.5] DI CHUYỂN NÚT TRÒN
-    connect(UserInputService.InputChanged, function(input)
-        if not bubbleDragging then return end
-        if not bubbleStartInput then return end
-
-        local isMouse =
-            input.UserInputType == Enum.UserInputType.MouseMovement
-            and bubbleTouchInput == nil
-
-        local isTouch =
-            input.UserInputType == Enum.UserInputType.Touch
-            and input == bubbleTouchInput
-
-        if not isMouse and not isTouch then
-            return
-        end
-
-        -- Tọa độ hiện tại của chuột / ngón tay
-        local currentPosition = Vector2.new(
-            input.Position.X,
-            input.Position.Y
-        )
-
-        -- Tính khoảng cách đã kéo
-        local delta = currentPosition - bubbleStartInput
-
-        -- Chỉ xác nhận kéo khi vượt ngưỡng
-        if delta.Magnitude >= DRAG_THRESHOLD then
-            bubbleMoved = true
-        end
-
-        if not bubbleMoved then return end
-
-        -- Di chuyển nút theo hướng kéo
-        setBubblePosition(
-            bubbleStartPosition.X + delta.X,
-            bubbleStartPosition.Y + delta.Y
-        )
-    end)
-
-    -- [Q.6] KẾT THÚC KÉO
     connect(UserInputService.InputEnded, function(input)
-        local isMouse =
-            input.UserInputType == Enum.UserInputType.MouseButton1
-            and bubbleTouchInput == nil
-
-        local isTouch =
-            input.UserInputType == Enum.UserInputType.Touch
-            and input == bubbleTouchInput
-
-        if isMouse or isTouch then
-            bubbleDragging = false
-            bubbleTouchInput = nil
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+            or input.UserInputType == Enum.UserInputType.Touch then
+            stopBubbleDrag()
         end
     end)
+    connect(UserInputService.WindowFocusReleased, stopBubbleDrag)
 
-    -- [Q.7] BẤM NÚT TRÒN ĐỂ MỞ LẠI MENU
-    -- Activated hỗ trợ cả chuột và cảm ứng.
-    connect(restoreBubble.Activated, function()
-        if not minimized then return end
-
-        -- Nếu vừa kéo nút thì KHÔNG mở menu
-        if bubbleMoved then
-            return
-        end
-
-        minimized = false
-
-        -- Ẩn nút tròn
+    connect(restoreBubble.MouseButton1Click, function()
+        if bubbleMoved then return end
         restoreBubble.Visible = false
-
-        -- Mở lại menu tại vị trí ban đầu
         main.Visible = true
     end)
 
+    -- Bấm nút Minimize (−) thu nhỏ menu
+    connect(minimizeButton.MouseButton1Click, function()
+        main.Visible = false
+        local ap = main.AbsolutePosition
+        local as = main.AbsoluteSize
+        local x = math.clamp(ap.X + 37, 30, (screen.AbsoluteSize.X or 940) - 30)
+        local y = math.clamp(ap.Y + 30, 30, (screen.AbsoluteSize.Y or 590) - 30)
+        restoreBubble.Position = UDim2.fromOffset(x, y)
+        restoreBubble.Visible = true
+    end)
 
+    -- [S] BẢO VỆ CHỐNG CLICK-THROUGH (CLICK-TO-MOVE SINK)
+    local SINK_ACTION = "LotusHub_InputSink"
+    local isHoveringMenu = false
+    local isHoveringBubble = false
 
-    -- [S] KÉO CỬA SỔ: ghi lại vị trí ban đầu khi nhấn, cập nhật theo độ dịch.
-    -- `uiScale.Scale` được tính đến để kéo đúng dù UI đã thu nhỏ trên điện thoại.
-    -- Keo cua so bang thanh tieu de (chuot / mobile touch).
+    local function isPosInObject(pos, obj)
+        if not (obj and obj.Visible) then return false end
+        local absPos = obj.AbsolutePosition
+        local absSize = obj.AbsoluteSize
+        return pos.X >= absPos.X and pos.X <= (absPos.X + absSize.X)
+            and pos.Y >= absPos.Y and pos.Y <= (absPos.Y + absSize.Y)
+    end
+
+    local function isInputOverUI(pos)
+        if pos and (isPosInObject(pos, main) or isPosInObject(pos, restoreBubble)) then
+            return true
+        end
+        local mouseLoc = UserInputService:GetMouseLocation()
+        if mouseLoc and (isPosInObject(mouseLoc, main) or isPosInObject(mouseLoc, restoreBubble)) then
+            return true
+        end
+        return false
+    end
+
+    local function updateSink()
+        local shouldSink = (isHoveringMenu and main.Visible) or (isHoveringBubble and restoreBubble.Visible)
+        if shouldSink then
+            pcall(function()
+                ContextActionService:BindActionAtPriority(
+                    SINK_ACTION,
+                    function()
+                        return Enum.ContextActionResult.Sink
+                    end,
+                    false,
+                    Enum.ContextActionPriority.High.Value + 3000,
+                    Enum.UserInputType.MouseButton1,
+                    Enum.UserInputType.MouseButton2,
+                    Enum.UserInputType.Touch
+                )
+            end)
+        else
+            pcall(function()
+                ContextActionService:UnbindAction(SINK_ACTION)
+            end)
+        end
+    end
+
+    connect(main.MouseEnter, function()
+        isHoveringMenu = true
+        updateSink()
+    end)
+    connect(main.MouseLeave, function()
+        isHoveringMenu = false
+        updateSink()
+    end)
+    connect(restoreBubble.MouseEnter, function()
+        isHoveringBubble = true
+        updateSink()
+    end)
+    connect(restoreBubble.MouseLeave, function()
+        isHoveringBubble = false
+        updateSink()
+    end)
+
+    connect(main:GetPropertyChangedSignal("Visible"), function()
+        if not main.Visible then isHoveringMenu = false end
+        updateSink()
+    end)
+    connect(restoreBubble:GetPropertyChangedSignal("Visible"), function()
+        if not restoreBubble.Visible then isHoveringBubble = false end
+        updateSink()
+    end)
+
+    local function cancelHumanoidMovement()
+        local mouseLoc = UserInputService:GetMouseLocation()
+        if isInputOverUI(mouseLoc) then
+            pcall(function()
+                local char = localPlayer and localPlayer.Character
+                if char then
+                    local hum = char:FindFirstChildOfClass("Humanoid")
+                    local hrp = char:FindFirstChild("HumanoidRootPart")
+                    if hum and hrp then
+                        hum:MoveTo(hrp.Position)
+                    end
+                end
+            end)
+        end
+    end
+
+    connect(UserInputService.InputBegan, function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+            or input.UserInputType == Enum.UserInputType.Touch then
+            if isInputOverUI(input.Position) then
+                cancelHumanoidMovement()
+            end
+        end
+    end)
+
+    -- Hook ClickToMove Controller của Roblox để chặn Click-to-Move xuyên thấu
+    task.spawn(function()
+        pcall(function()
+            local ps = localPlayer and localPlayer:WaitForChild("PlayerScripts", 3)
+            if not ps then return end
+            local playerModule = require(ps:WaitForChild("PlayerModule", 3))
+            local controls = nil
+            pcall(function() controls = playerModule:GetControls() end)
+
+            local ctm = nil
+            pcall(function()
+                if controls and type(controls.GetClickToMoveController) == "function" then
+                    ctm = controls:GetClickToMoveController()
+                elseif type(playerModule.GetClickToMoveController) == "function" then
+                    ctm = playerModule:GetClickToMoveController()
+                elseif controls and controls.clickToMoveController then
+                    ctm = controls.clickToMoveController
+                end
+            end)
+
+            if ctm and type(ctm.OnTap) == "function" and not ctm._lotusHooked then
+                ctm._lotusHooked = true
+                local originalOnTap = ctm.OnTap
+                ctm.OnTap = function(self, tapPositions, goToPoint, wasTouchTap)
+                    local mouseLoc = UserInputService:GetMouseLocation()
+                    if isInputOverUI(mouseLoc) then
+                        return
+                    end
+                    return originalOnTap(self, tapPositions, goToPoint, wasTouchTap)
+                end
+            end
+        end)
+    end)
+
+    -- [T] KÉO CỬA SỔ BẰNG THANH TIÊU ĐỀ (HEADER DRAG)
     local dragging = false
     local dragTouch = nil
-    local initialInputPos
-    local initialWindowPos
+    local dragStartMousePos = nil
+    local dragStartWindowPos = nil
+    local dragMoved = false
+    local DRAG_DEADZONE = 5
+
+    local function isInsideButton(pos, btn, padding)
+        if not (btn and btn.Visible) then return false end
+        local pad = padding or 0
+        local ap = btn.AbsolutePosition
+        local as = btn.AbsoluteSize
+        return pos.X >= (ap.X - pad) and pos.X <= (ap.X + as.X + pad)
+            and pos.Y >= (ap.Y - pad) and pos.Y <= (ap.Y + as.Y + pad)
+    end
+
+    local function isInTopButtonZone(pos)
+        if isInsideButton(pos, closeButton, 8) or isInsideButton(pos, minimizeButton, 8) then
+            return true
+        end
+        if topControls and topControls.Visible then
+            local tap = topControls.AbsolutePosition
+            local tas = topControls.AbsoluteSize
+            if pos.X >= (tap.X - 5) and pos.X <= (tap.X + tas.X + 5)
+                and pos.Y >= (tap.Y - 5) and pos.Y <= (tap.Y + tas.Y + 5) then
+                return true
+            end
+        end
+        return false
+    end
+
     connect(header.InputBegan, function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1
             or input.UserInputType == Enum.UserInputType.Touch then
+
+            if isInTopButtonZone(input.Position) then
+                return
+            end
+
             dragging = true
+            dragMoved = false
             dragTouch = (input.UserInputType == Enum.UserInputType.Touch) and input or nil
-            initialInputPos = input.Position
-            initialWindowPos = main.Position
+            dragStartMousePos = input.Position
+            dragStartWindowPos = main.Position
         end
     end)
+
     connect(UserInputService.InputChanged, function(input)
-        if not dragging or not initialInputPos then return end
+        if not dragging or not dragStartMousePos or not dragStartWindowPos then return end
         if input.UserInputType == Enum.UserInputType.MouseMovement
             or (input.UserInputType == Enum.UserInputType.Touch and input == dragTouch) then
-            local delta = (input.Position - initialInputPos) / uiScale.Scale
+            local currentPos = input.Position
+            local deltaPix = currentPos - dragStartMousePos
+
+            if not dragMoved then
+                if deltaPix.Magnitude >= DRAG_DEADZONE then
+                    dragMoved = true
+                else
+                    return
+                end
+            end
+
+            local scale = uiScale and uiScale.Scale or 1
+            if scale <= 0 then scale = 1 end
+            local deltaScaled = deltaPix / scale
+
             main.Position = UDim2.new(
-                initialWindowPos.X.Scale, initialWindowPos.X.Offset + delta.X,
-                initialWindowPos.Y.Scale, initialWindowPos.Y.Offset + delta.Y
+                dragStartWindowPos.X.Scale, dragStartWindowPos.X.Offset + deltaScaled.X,
+                dragStartWindowPos.Y.Scale, dragStartWindowPos.Y.Offset + deltaScaled.Y
             )
         end
     end)
+
+    local function stopDragging()
+        dragging = false
+        dragTouch = nil
+        dragStartMousePos = nil
+        dragStartWindowPos = nil
+        dragMoved = false
+    end
+
     connect(UserInputService.InputEnded, function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1
             or (input.UserInputType == Enum.UserInputType.Touch and input == dragTouch) then
-            dragging = false
-            dragTouch = nil
+            stopDragging()
         end
     end)
+    connect(UserInputService.WindowFocusReleased, stopDragging)
 
-    -- [T] TỰ ĐIỀU CHỈNH KÍCH THƯỚC THEO MÀN HÌNH
-    -- fit là hệ số co sao cho cửa sổ 940x590 vừa viewport (trừ viền 20px).
-    -- math.clamp(..., 0.35, 1): co tối đa tới 35%, không phóng lớn hơn 100%.
+    -- [U] RESPONSIVE TỰ CO GIÃN THEO MÀN HÌNH (ỔN ĐỊNH LOBBY VÀ STAGE)
     local function updateScale()
-        local camera = Workspace.CurrentCamera
-        if not camera then return end
-        local viewport = camera.ViewportSize
-        local fit = math.min((viewport.X - 20) / 940, (viewport.Y - 20) / 590, 1)
+        local cam = Workspace.CurrentCamera
+        local size = (screen and screen.AbsoluteSize)
+        if not size or size.X <= 0 or size.Y <= 0 then
+            size = cam and cam.ViewportSize
+        end
+        if not size or size.X <= 0 or size.Y <= 0 then return end
+
+        local fit = math.min((size.X - 20) / 940, (size.Y - 20) / 590, 1)
         uiScale.Scale = math.clamp(fit, 0.35, 1)
     end
 
-    local cameraConnection
+    connect(screen:GetPropertyChangedSignal("AbsoluteSize"), updateScale)
+    local cameraConn = nil
     local function watchCamera()
-        if cameraConnection then
-            cameraConnection:Disconnect()
-            cameraConnection = nil
+        if cameraConn then
+            cameraConn:Disconnect()
+            cameraConn = nil
         end
         if Workspace.CurrentCamera then
-            cameraConnection = connect(Workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"), updateScale)
+            cameraConn = connect(Workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"), updateScale)
         end
         updateScale()
     end
     connect(Workspace:GetPropertyChangedSignal("CurrentCamera"), watchCamera)
     watchCamera()
 
-    -- [U] API ĐỂ ĐỌC/SỬA DỮ LIỆU CỦA UI TỪ BÊN NGOÀI
-    -- copyState sao chép cả bảng con để GetState() trả bản sao, tránh người dùng
-    -- sửa trực tiếp vào bảng state nội bộ rồi nghĩ giao diện đã tự cập nhật.
+    -- [V] SAO CHÉP STATE NỘI BỘ
     local function copyState(source)
         local copy = {}
         for k, v in pairs(source) do
@@ -861,7 +1021,7 @@ function Menu.Create(ctx)
         return copy
     end
 
-    -- [U] API CÔNG KHAI CHO CÁC MODULE KHÁC
+    -- [W] API CÔNG KHAI CHO CÁC MODULE KHÁC
     controller = {
         scroll = scroll,
         section = section,
@@ -871,7 +1031,6 @@ function Menu.Create(ctx)
         infoItem = infoItem,
     }
 
-    -- Đăng ký thêm tab và tạo nút bên trái (không hardcode Gamemode...).
     function controller:RegisterTab(name, buildFn)
         assert(type(name) == "string" and name ~= "", "Tên tab không hợp lệ")
         assert(type(buildFn) == "function", "Cần hàm dựng nội dung tab")
@@ -902,16 +1061,18 @@ function Menu.Create(ctx)
     end
 
     function controller:Destroy()
-        ctx:Destroy() -- Ngắt sự kiện, dừng worker và xóa cả menu + nút tròn.
+        pcall(function()
+            ContextActionService:UnbindAction(SINK_ACTION)
+        end)
+        ctx:Destroy()
     end
 
-    -- SetModifiers sẽ được module Gameplay gắn riêng sau khi được import.
-    -- Đóng UI qua dấu X (không tắt Auto Play đang bật bên trong game).
+    -- Đóng UI hoàn toàn bằng nút ×
     connect(closeButton.MouseButton1Click, function()
         controller:Destroy()
     end)
 
-    ctx.screen = screen -- Match cần để bỏ qua chính GUI LotusHub khi quét GUI game.
+    ctx.screen = screen
     return controller
 end
 
@@ -919,15 +1080,146 @@ return Menu
 end)()
 -- END MODULE Menu
 
+-- BEGIN MODULE ModifierConfig
+Modules.ModifierConfig = (function()
+--[[
+    LotusHub / modules/Modifiers/ModifierConfig.lua
+    Bảng dữ liệu danh sách Modifiers (Buff, Debuff, Mechanics) của Anime Vanguards.
+    Nguồn: Trích xuất trực tiếp từ raw source Auto Pick Modifiers do người dùng cung cấp.
+]]
+local ModifierConfig = {}
+
+-- [1] DANH SÁCH TOÀN BỘ 45 MODIFIERS ĐƯỢC PHÂN THEO BẬC ƯU TIÊN MẶC ĐỊNH
+ModifierConfig.List = {
+    -- Top Buff / Kinh tế (Điểm rất cao: 90 - 100)
+    { Name = "Money Surge", Priority = 100, Desc = "+40% Yen from waves and Farms" },
+    { Name = "High Class", Priority = 100, Desc = "Start with 10k Yen, +40% income" },
+    { Name = "Harvest", Priority = 95, Desc = "+100% event currency" },
+    { Name = "Gluttony", Priority = 95, Desc = "Farms pay out a second time" },
+    { Name = "Monarch", Priority = 90, Desc = "Monarch trait for one unit" },
+    { Name = "Damage", Priority = 85, Desc = "Boosts unit damage" },
+    { Name = "Cooldown", Priority = 85, Desc = "Lowers unit SPA" },
+    { Name = "Press It", Priority = 80, Desc = "-50% active ability cooldown" },
+    { Name = "Uncommon Loot", Priority = 80, Desc = "2 random uncommon buffs" },
+    { Name = "Common Loot", Priority = 75, Desc = "3 random common buffs" },
+    { Name = "Range", Priority = 75, Desc = "Boosts unit range" },
+    { Name = "Slayer", Priority = 75, Desc = "More damage to bosses" },
+    { Name = "Lifeline", Priority = 70, Desc = "+1 Life Stock every 5 waves" },
+    { Name = "Tyrant Destroyer", Priority = 70, Desc = "Friezo spawns at half health" },
+    { Name = "Sphere Finder", Priority = 70, Desc = "Start with 2 Spheres" },
+    { Name = "New Unit", Priority = 70, Desc = "Adds a unit to your hotbar" },
+    { Name = "Sloth", Priority = 65, Desc = "Enemies move 30% slower" },
+
+    -- Cơ chế đổi độ khó / Trung bình (Điểm vừa: 30 - 60)
+    { Name = "Champions", Priority = 60, Desc = "Mini-bosses, +75% event currency" },
+    { Name = "Fast", Priority = 60, Desc = "More Fast cards, more currency" },
+    { Name = "Strong", Priority = 55, Desc = "More Strong cards, more currency" },
+    { Name = "Dodge", Priority = 50, Desc = "More Dodge cards, more currency" },
+    { Name = "Fisticuffs", Priority = 50, Desc = "-40% range, +200% damage" },
+    { Name = "Precise Attack", Priority = 45, Desc = "+150% damage, +100% SPA" },
+    { Name = "Planning Ahead", Priority = 40, Desc = "+150% range, -50% damage" },
+    { Name = "Limit Break", Priority = 40, Desc = "2x placement cap, smaller discounts" },
+    { Name = "No Trait No Problem", Priority = 40, Desc = "No traits, 2x placement cap" },
+    { Name = "King's Burden", Priority = 35, Desc = "Monarch for all units, -40% Yen" },
+    { Name = "Warding off Evil", Priority = 35, Desc = "Resist debuffs with Cursed Objects" },
+    { Name = "Tyrant Arrives", Priority = 30, Desc = "First slot only, free placements" },
+    { Name = "Greed", Priority = 30, Desc = "Upgraded unit becomes greedy" },
+    { Name = "Lust", Priority = 30, Desc = "Selling upgraded unit refunds full" },
+    { Name = "Wrath", Priority = 30, Desc = "Hits trigger wrath damage" },
+
+    -- Debuff bất lợi / Né nhặt (Điểm thấp: 1 - 15)
+    { Name = "Pride", Priority = 15, Desc = "Only 1 unit placed at a time" },
+    { Name = "Envy", Priority = 10, Desc = "Strongest unit loses 30% stats" },
+    { Name = "Nightmare Boss", Priority = 10, Desc = "Story boss mechanic" },
+    { Name = "Nightmare Armor", Priority = 10, Desc = "-20% damage to enemies" },
+    { Name = "Nightmare Health", Priority = 10, Desc = "+100% enemy HP" },
+    { Name = "Nightmare Speed", Priority = 10, Desc = "+50% enemy speed" },
+    { Name = "Nightmare Weakness", Priority = 10, Desc = "-20% unit damage" },
+    { Name = "Regen", Priority = 5, Desc = "Enemies regenerate health" },
+    { Name = "Revitalize", Priority = 5, Desc = "Enemies heal nearby on death" },
+    { Name = "Shielded", Priority = 5, Desc = "Damage shield on enemies" },
+    { Name = "Immunity", Priority = 3, Desc = "Immune to Slow & Stun" },
+    { Name = "Thrice", Priority = 3, Desc = "Enemies split on death" },
+    { Name = "Drowsy", Priority = 2, Desc = "Your units attack slower" },
+    { Name = "Exploding", Priority = 2, Desc = "Explode on death, stunning units" },
+    { Name = "Quake", Priority = 1, Desc = "Periodically stuns your units" },
+}
+
+-- [2] TẠO MAP TRA CỨU ĐIỂM ƯU TIÊN MẶC ĐỊNH (KEY VIẾT THƯỜNG)
+function ModifierConfig.GetDefaultPriorityMap()
+    local lookup = {}
+    for _, item in ipairs(ModifierConfig.List) do
+        lookup[string.lower(item.Name)] = item.Priority
+    end
+    return lookup
+end
+
+-- [3] HÀM CHUẨN HÓA TÊN THẺ (LỌC RICHTEXT/HTML, SỐ LA MÃ & SỐ THƯỜNG)
+function ModifierConfig.NormalizeCardName(rawText, priorityLookup)
+    if type(rawText) ~= "string" then return "", -1 end
+    -- Bỏ thẻ HTML/RichText và khoảng trắng thừa
+    local text = rawText:gsub("<[^>]+>", ""):match("^%s*(.-)%s*$") or ""
+
+    -- Tách số La Mã (I, II, III, IV, V, VI, VII, VIII, IX, X...) hoặc số thường ở cuối tên thẻ
+    local baseName = text:gsub("%s+[IVXLCDM]+$", ""):gsub("%s+%d+$", "")
+    baseName = baseName:match("^%s*(.-)%s*$") or baseName
+
+    local lowerBase = string.lower(baseName)
+    local score = priorityLookup and priorityLookup[lowerBase]
+
+    return baseName, (score or -1)
+end
+
+-- [4] LẤY DANH SÁCH MODIFIER ĐÃ SẮP XẾP THEO ĐIỂM ƯU TIÊN (HỖ TRỢ TÌM KIẾM)
+function ModifierConfig.GetSortedList(priorityOverrides, query)
+    local results = {}
+    local q = (type(query) == "string" and string.lower(query):match("^%s*(.-)%s*$")) or ""
+
+    for _, item in ipairs(ModifierConfig.List) do
+        local nameLower = string.lower(item.Name)
+        local descLower = string.lower(item.Desc)
+
+        if q == "" or nameLower:find(q, 1, true) or descLower:find(q, 1, true) then
+            local currentPriority = item.Priority
+            if priorityOverrides and priorityOverrides[item.Name] ~= nil then
+                currentPriority = tonumber(priorityOverrides[item.Name]) or item.Priority
+            end
+
+            table.insert(results, {
+                Name = item.Name,
+                Priority = currentPriority,
+                Desc = item.Desc,
+            })
+        end
+    end
+
+    table.sort(results, function(a, b)
+        if a.Priority == b.Priority then
+            return a.Name < b.Name
+        end
+        return a.Priority > b.Priority
+    end)
+
+    return results
+end
+
+-- [5] HÀM KHỞI TẠO TƯƠNG THÍCH VỚI LOADMODULE CỦA LOTUSHUB
+function ModifierConfig.Init(ctx, ui)
+    if ctx then
+        ctx.ModifierConfig = ModifierConfig
+    end
+end
+
+return ModifierConfig
+end)()
+-- END MODULE ModifierConfig
+
 -- BEGIN MODULE Gameplay
 Modules.Gameplay = (function()
 --[[
-    LotusHub / modules/Gameplay.lua — Chỉ chứa nội dung tab Gameplay.
-    Giữ nguyên các nhóm Match, Replay, Restart, Modifiers, Failsafe,
-    Boost Performance từ Menu.lua của người dùng.
-    Match + Replay đã được nối logic. Lobby có GUI Leave CANDIDATE;
-    remote / PlaceId trong raw chưa xác minh nên không tự gọi.
-    Muốn thêm tính năng Gameplay, sửa hàm buildGameplay() ở file này.
+    LotusHub / modules/Gameplay.lua — Nội dung tab Gameplay.
+    Nhóm chức năng: Match, Replay, Failsafe, Boost Performance.
+    (Các mục Modifiers và Restart đã được chuyển sang tab Modifiers riêng).
 ]]
 local Gameplay = {}
 
@@ -939,12 +1231,6 @@ function Gameplay.Init(ctx, ui)
         AutoReplay = false,
         ReplayLimitEnabled = false,
         ReplayLimit = 20,
-        RestartAfterWavesEnabled = false,
-        RestartAfterWaves = 10,
-        RestartIfMissingModifier = false,
-        AutoPickModifiers = false,
-        SelectedModifiers = {},
-        ModifierPriority = {},
         FailsafeTeleportEnabled = false,
         FailsafeMinutes = 15,
         FreeFireGraphics = false,
@@ -960,25 +1246,21 @@ function Gameplay.Init(ctx, ui)
     local defaultExpanded = {
         Match = true,
         Replay = true,
-        Restart = false,
-        Modifiers = false,
         Failsafe = false,
         BoostPerformance = false,
     }
     for key, value in pairs(defaultExpanded) do
         if ctx.expanded[key] == nil then ctx.expanded[key] = value end
     end
-    local knownModifiers = ctx.knownModifiers
 
     -- [3] Dùng các hàm vẽ của Menu, không lặp lại GUI code tại đây.
     local scroll = ui.scroll
     local section = ui.section
     local stateToggle = ui.stateToggle
-    local toggleItem = ui.toggleItem
     local sliderItem = ui.sliderItem
     local infoItem = ui.infoItem
 
-    -- [4] Hàm dưới được chuyển nguyên từ buildGameplay() trong source gốc.
+    -- [4] Hàm dựng nội dung tab Gameplay.
     local function buildGameplay()
         -- Nhóm MATCH: Auto Startgame và Auto Active Auto Play là hai toggle riêng.
         local match = section(scroll, "Match", "Match", true)
@@ -986,25 +1268,15 @@ function Gameplay.Init(ctx, ui)
         stateToggle(match, "Auto Active Auto Play", "AutoActiveAutoPlay")
 
         -- Nhóm REPLAY: giữ Auto Replay và tùy chọn về Lobby sau N lần.
-        -- ReplayLimit và AutoReplay đã nối module Gameplay/Replay.lua.
-        -- [REPLAY] Các chức năng còn giữ lại
         local replay = section(scroll, "Replay", "Replay", true)
-
-        -- Tự động chơi lại trận
         stateToggle(replay, "Auto Replay", "AutoReplay")
-
-        -- Tùy chọn về Lobby sau N lần Replay
         stateToggle(replay, "Teleport to lobby after N replays", "ReplayLimitEnabled")
-
-        -- Chọn số lần Replay trước khi về Lobby
         sliderItem(replay, "Replay count (N)", state, "ReplayLimit", 1, 100, "")
 
-        -- [REPLAY STATUS] Lấy chức năng hiển thị đếm + Reset từ raw.
-        -- Không tạo ScreenGui phụ; dùng một hàng trong menu LotusHub.
+        -- [REPLAY STATUS] Hiển thị đếm + nút Reset
         local progressRow = infoItem(replay, "Đã Replay: 0 / " .. tostring(state.ReplayLimit))
         local progressText = progressRow:FindFirstChildWhichIsA("TextLabel")
         if progressText then
-            -- Chừa vùng bên phải cho nút Reset.
             progressText.Size = UDim2.new(1, -140, 1, -6)
             progressText.TextSize = 14
         end
@@ -1019,7 +1291,9 @@ function Gameplay.Init(ctx, ui)
         reset.TextSize = 14
         reset.TextColor3 = Color3.fromRGB(225, 228, 232)
         reset.Text = "Reset (0)"
-        reset.AutoButtonColor = false -- Không hiệu ứng nhấp nháy/đổi màu.
+        reset.AutoButtonColor = false -- Tắt hiệu ứng di chuyển/nhún khi nhấn
+        reset.Active = true
+        reset.Selectable = false
         reset.Parent = progressRow
         local resetCorner = Instance.new("UICorner")
         resetCorner.CornerRadius = UDim.new(0, 6)
@@ -1030,8 +1304,6 @@ function Gameplay.Init(ctx, ui)
             end
         end)
 
-        -- Replay.Init sẽ gọi sink mỗi khi bộ đếm hoặc N thay đổi.
-        -- Kiểm tra Parent vì Gameplay có thể được dựng lại khi đổi tab.
         ctx.replayProgressSink = function(count, limit, status)
             if not progressRow.Parent then return end
             if progressText then
@@ -1046,72 +1318,25 @@ function Gameplay.Init(ctx, ui)
                 current.waitingForLobby and "Chờ kết thúc" or nil)
         end
 
-        -- Nhóm RESTART: con số wave chỉ lưu trong state.RestartAfterWaves.
-        -- Danh sách yêu cầu Modifier chỉ xuất hiện sau SetModifiers(names).
-        local restart = section(scroll, "Restart", "Restart", false)
-        stateToggle(restart, "Auto Restart After Waves", "RestartAfterWavesEnabled")
-        sliderItem(restart, "Restart at wave", state, "RestartAfterWaves", 1, 200, "")
-        stateToggle(restart, "Auto Restart If Don't Have Modifier", "RestartIfMissingModifier")
-        if #knownModifiers == 0 then
-            infoItem(restart, "Chưa có danh sách Modifier thật để chọn điều kiện Restart.")
-        else
-            for _, modifier in ipairs(knownModifiers) do
-                local name = modifier
-                toggleItem(restart, "Require: " .. name, function()
-                    return state.SelectedModifiers[name] == true
-                end, function(value)
-                    state.SelectedModifiers[name] = value
-                end)
-            end
-        end
-
-        -- Nhóm MODIFIERS: Priority 0..100 là mức ưu tiên HIỂN THỊ để tự chỉnh,
-        -- không phải cơ chế ưu tiên hay giá trị modifier của game.
-        local modifiers = section(scroll, "Modifiers", "Modifiers", false)
-        stateToggle(modifiers, "Auto Pick Modifiers", "AutoPickModifiers")
-        if #knownModifiers == 0 then
-            infoItem(modifiers, "Modifier Priority: MISSING — chua co ten Modifier thu thap tu game.")
-        else
-            for _, modifier in ipairs(knownModifiers) do
-                sliderItem(modifiers, "Priority: " .. modifier, state.ModifierPriority, modifier, 0, 100, "")
-            end
-        end
-
         -- Nhóm FAILSAFE: số phút đặt ở slider chỉ được ghi vào state.FailsafeMinutes.
         local failsafe = section(scroll, "Failsafe", "Failsafe", false)
         stateToggle(failsafe, "Auto Teleport to Lobby After Minutes", "FailsafeTeleportEnabled")
         sliderItem(failsafe, "Minutes", state, "FailsafeMinutes", 1, 120, "m")
 
-        -- Nhóm BOOST: các nút không thay đổi đồ họa và không xóa entity/map thật.
+        -- Nhóm BOOST PERFORMANCE: tối ưu FPS và đồ họa.
         local boost = section(scroll, "BoostPerformance", "Boost Performance", false)
         stateToggle(boost, "FreeFire Graphics (Boost FPS)", "FreeFireGraphics")
         stateToggle(boost, "Delete Map", "DeleteMap")
         stateToggle(boost, "Delete Entities", "DeleteEntities")
-        infoItem(boost, "Chi la toggle UI. KHONG xoa map/entities hoac thay doi do hoa that.")
+        infoItem(boost, "FreeFire Graphics: Tối ưu FPS, tắt đổ bóng & hiệu ứng.")
     end
 
-    -- [5] API nạp Modifier từ dữ liệu ĐÃ XÁC MINH. Không tự đặt tên giả.
+    -- [5] API tương thích ngược cho SetModifiers
     function ui:SetModifiers(names)
-        assert(type(names) == "table", "SetModifiers expects an array of names")
-        local result, seen = {}, {}
-        for _, candidate in ipairs(names) do
-            if type(candidate) == "string" then
-                local name = candidate:match("^%s*(.-)%s*$")
-                if name ~= "" and not seen[name] and #result < 30 then
-                    table.insert(result, name)
-                    seen[name] = true
-                    if state.ModifierPriority[name] == nil then
-                        state.ModifierPriority[name] = 50 -- Giá trị UI mặc định.
-                    end
-                end
-            end
-        end
-        knownModifiers = result
-        ctx.knownModifiers = result
-        ui:Refresh()
+        -- No-op: tab Modifiers đã quản lý danh sách Modifiers
     end
 
-    -- [6] Khi bấm Gameplay, Menu gọi buildGameplay() để vẽ các hàng.
+    -- [6] Đăng ký tab Gameplay với Menu chính.
     ui:RegisterTab("Gameplay", function()
         buildGameplay()
     end)
@@ -1120,6 +1345,628 @@ end
 return Gameplay
 end)()
 -- END MODULE Gameplay
+
+-- BEGIN MODULE Modifiers
+Modules.Modifiers = (function()
+--[[
+    LotusHub / modules/Modifiers.lua — Tab Modifiers (cùng cấp với Gameplay trên menu sidebar).
+    Bao gồm các nhóm chức năng:
+      1. Auto Pick Modifiers: Tự động nhặt thẻ theo độ ưu tiên (lọc số La Mã, hỗ trợ Starter & Additive).
+      2. Restart (con của Modifiers):
+         - Auto Restart After Waves: Slider chọn số wave để restart trận.
+         - Auto Restart If Don't Have Modifier: Bảng chọn Modifier để chọn modifier cần có.
+]]
+local Modifiers = {}
+
+function Modifiers.Init(ctx, ui)
+    -- [1] State mặc định của tab Modifiers
+    local defaults = {
+        AutoPickModifiers = false,
+        ModifierPriority = {},
+        RestartAfterWavesEnabled = false,
+        RestartAfterWaves = 10,
+        RestartIfMissingModifier = false,
+        SelectedModifiers = {},
+    }
+    local state = ctx.state
+    for key, value in pairs(defaults) do
+        if state[key] == nil then state[key] = value end
+    end
+
+    -- [2] Trạng thái nhóm gập/mở mặc định trong tab Modifiers
+    local defaultExpanded = {
+        AutoPick = true,
+        Restart = true,
+    }
+    for key, value in pairs(defaultExpanded) do
+        if ctx.expanded[key] == nil then ctx.expanded[key] = value end
+    end
+
+    -- [3] Nạp cấu hình ModifierConfig nếu chưa có
+    local ModifierConfig = ctx.ModifierConfig
+    if not ModifierConfig then
+        pcall(function()
+            local chunk = loadstring(readfile("LotusHub/modules/Modifiers/ModifierConfig.lua"))
+            if chunk then ModifierConfig = chunk() end
+        end)
+        if ModifierConfig then ctx.ModifierConfig = ModifierConfig end
+    end
+
+    local C = {
+        row = Color3.fromRGB(56, 58, 63),
+        subRow = Color3.fromRGB(42, 44, 49),
+        active = Color3.fromRGB(105, 111, 117),
+        silver = Color3.fromRGB(225, 228, 232),
+        muted = Color3.fromRGB(165, 171, 179),
+        track = Color3.fromRGB(17, 19, 23),
+        on = Color3.fromRGB(94, 116, 120),
+        border = Color3.fromRGB(80, 85, 95),
+        accent = Color3.fromRGB(55, 95, 150),
+    }
+
+    local scroll = ui.scroll
+    local section = ui.section
+    local stateToggle = ui.stateToggle
+    local sliderItem = ui.sliderItem
+    local infoItem = ui.infoItem
+
+    -- [4] Hàm dựng nội dung tab Modifiers
+    local function buildModifiers()
+        -- ====================================================================
+        -- 1. NHÓM AUTO PICK MODIFIERS
+        -- ====================================================================
+        local pickSection = section(scroll, "Auto Pick Modifiers", "AutoPick", true)
+        stateToggle(pickSection, "Auto Pick Modifiers", "AutoPickModifiers")
+
+        local modTableContainer = Instance.new("Frame")
+        modTableContainer.Name = "ModifierTableContainer"
+        modTableContainer.LayoutOrder = #pickSection:GetChildren()
+        modTableContainer.Size = UDim2.new(1, 0, 0, 260)
+        modTableContainer.BackgroundColor3 = C.row
+        modTableContainer.BackgroundTransparency = 0.26
+        modTableContainer.BorderSizePixel = 0
+        modTableContainer.Active = true
+        modTableContainer.Parent = pickSection
+        local mtcCorner = Instance.new("UICorner")
+        mtcCorner.CornerRadius = UDim.new(0, 8)
+        mtcCorner.Parent = modTableContainer
+
+        local modTableHeader = Instance.new("TextLabel")
+        modTableHeader.Size = UDim2.new(1, -24, 0, 26)
+        modTableHeader.Position = UDim2.fromOffset(12, 6)
+        modTableHeader.BackgroundTransparency = 1
+        modTableHeader.Text = "Độ ưu tiên chọn Modifier (Priority):"
+        modTableHeader.Font = Enum.Font.GothamSemibold
+        modTableHeader.TextSize = 14
+        modTableHeader.TextColor3 = C.silver
+        modTableHeader.TextXAlignment = Enum.TextXAlignment.Left
+        modTableHeader.Parent = modTableContainer
+
+        -- Ô tìm kiếm cho Modifiers
+        local modSearchBox = Instance.new("TextBox")
+        modSearchBox.Size = UDim2.new(1, -24, 0, 30)
+        modSearchBox.Position = UDim2.fromOffset(12, 34)
+        modSearchBox.BackgroundColor3 = C.track
+        modSearchBox.BorderSizePixel = 0
+        modSearchBox.PlaceholderText = "🔍 Tìm modifier..."
+        modSearchBox.PlaceholderColor3 = C.muted
+        modSearchBox.Text = ""
+        modSearchBox.TextColor3 = C.silver
+        modSearchBox.Font = Enum.Font.Gotham
+        modSearchBox.TextSize = 13
+        modSearchBox.ClearTextOnFocus = false
+        modSearchBox.Parent = modTableContainer
+        local msbCorner = Instance.new("UICorner")
+        msbCorner.CornerRadius = UDim.new(0, 6)
+        msbCorner.Parent = modSearchBox
+        local msbPad = Instance.new("UIPadding")
+        msbPad.PaddingLeft = UDim.new(0, 10)
+        msbPad.Parent = modSearchBox
+
+        local modScroll = Instance.new("ScrollingFrame")
+        modScroll.Size = UDim2.new(1, -24, 1, -74)
+        modScroll.Position = UDim2.fromOffset(12, 68)
+        modScroll.BackgroundTransparency = 1
+        modScroll.BorderSizePixel = 0
+        modScroll.ScrollBarThickness = 4
+        modScroll.ScrollBarImageColor3 = C.muted
+        modScroll.ScrollingDirection = Enum.ScrollingDirection.Y
+        modScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+        modScroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+        modScroll.Parent = modTableContainer
+        local mslLayout = Instance.new("UIListLayout")
+        mslLayout.SortOrder = Enum.SortOrder.LayoutOrder
+        mslLayout.Padding = UDim.new(0, 5)
+        mslLayout.Parent = modScroll
+
+        local modItems = {}
+        local function renderModifierPriorityList()
+            for _, child in ipairs(modItems) do
+                child:Destroy()
+            end
+            table.clear(modItems)
+
+            local sortedList = {}
+            if ModifierConfig and type(ModifierConfig.GetSortedList) == "function" then
+                sortedList = ModifierConfig.GetSortedList(state.ModifierPriority, modSearchBox.Text)
+            else
+                local baseList = (ModifierConfig and ModifierConfig.List) or {}
+                for _, item in ipairs(baseList) do
+                    local p = state.ModifierPriority[item.Name] or item.Priority
+                    table.insert(sortedList, { Name = item.Name, Priority = p, Desc = item.Desc })
+                end
+            end
+
+            for _, mod in ipairs(sortedList) do
+                local itemFrame = Instance.new("Frame")
+                itemFrame.Size = UDim2.new(1, -6, 0, 44)
+                itemFrame.BackgroundColor3 = C.subRow
+                itemFrame.BorderSizePixel = 0
+                itemFrame.Parent = modScroll
+                local ifCorner = Instance.new("UICorner")
+                ifCorner.CornerRadius = UDim.new(0, 6)
+                ifCorner.Parent = itemFrame
+
+                local nameLabel = Instance.new("TextLabel")
+                nameLabel.Size = UDim2.new(1, -170, 0, 20)
+                nameLabel.Position = UDim2.fromOffset(10, 3)
+                nameLabel.BackgroundTransparency = 1
+                nameLabel.Text = mod.Name
+                nameLabel.TextColor3 = C.silver
+                nameLabel.Font = Enum.Font.GothamBold
+                nameLabel.TextSize = 13
+                nameLabel.TextXAlignment = Enum.TextXAlignment.Left
+                nameLabel.Parent = itemFrame
+
+                local descLabel = Instance.new("TextLabel")
+                descLabel.Size = UDim2.new(1, -170, 0, 16)
+                descLabel.Position = UDim2.fromOffset(10, 23)
+                descLabel.BackgroundTransparency = 1
+                descLabel.Text = mod.Desc or ""
+                descLabel.TextColor3 = C.muted
+                descLabel.Font = Enum.Font.Gotham
+                descLabel.TextSize = 10
+                descLabel.TextTruncate = Enum.TextTruncate.AtEnd
+                descLabel.TextXAlignment = Enum.TextXAlignment.Left
+                descLabel.Parent = itemFrame
+
+                -- Nút TOP: đưa lên ưu tiên cao nhất
+                local topBtn = Instance.new("TextButton")
+                topBtn.Size = UDim2.fromOffset(36, 26)
+                topBtn.Position = UDim2.new(1, -156, 0.5, -13)
+                topBtn.BackgroundColor3 = C.accent
+                topBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+                topBtn.Font = Enum.Font.GothamBold
+                topBtn.TextSize = 10
+                topBtn.Text = "TOP"
+                topBtn.AutoButtonColor = false
+                topBtn.Active = true
+                topBtn.Parent = itemFrame
+                local tbCorner = Instance.new("UICorner")
+                tbCorner.CornerRadius = UDim.new(0, 4)
+                tbCorner.Parent = topBtn
+
+                topBtn.Activated:Connect(function()
+                    local highest = 100
+                    for _, m in ipairs(sortedList) do
+                        if m.Priority > highest then highest = m.Priority end
+                    end
+                    state.ModifierPriority[mod.Name] = highest + 5
+                    task.defer(renderModifierPriorityList)
+                end)
+
+                -- Hộp nhập Priority trực tiếp
+                local prioBox = Instance.new("TextBox")
+                prioBox.Size = UDim2.fromOffset(46, 26)
+                prioBox.Position = UDim2.new(1, -114, 0.5, -13)
+                prioBox.BackgroundColor3 = C.track
+                prioBox.TextColor3 = Color3.fromRGB(255, 220, 100)
+                prioBox.Font = Enum.Font.GothamBold
+                prioBox.TextSize = 12
+                prioBox.Text = tostring(mod.Priority)
+                prioBox.ClearTextOnFocus = false
+                prioBox.Parent = itemFrame
+                local pbCorner = Instance.new("UICorner")
+                pbCorner.CornerRadius = UDim.new(0, 4)
+                pbCorner.Parent = prioBox
+
+                prioBox.FocusLost:Connect(function()
+                    local num = tonumber(prioBox.Text)
+                    if num and num >= 0 and num <= 99999 then
+                        state.ModifierPriority[mod.Name] = math.floor(num)
+                        task.defer(renderModifierPriorityList)
+                    else
+                        prioBox.Text = tostring(mod.Priority)
+                    end
+                end)
+
+                -- Nút tăng ưu tiên ▲ (+5)
+                local upBtn = Instance.new("TextButton")
+                upBtn.Size = UDim2.fromOffset(26, 12)
+                upBtn.Position = UDim2.new(1, -62, 0.5, -13)
+                upBtn.BackgroundColor3 = Color3.fromRGB(50, 52, 60)
+                upBtn.TextColor3 = C.silver
+                upBtn.Font = Enum.Font.GothamBold
+                upBtn.TextSize = 9
+                upBtn.Text = "▲"
+                upBtn.AutoButtonColor = false
+                upBtn.Active = true
+                upBtn.Parent = itemFrame
+                local ubCorner = Instance.new("UICorner")
+                ubCorner.CornerRadius = UDim.new(0, 3)
+                ubCorner.Parent = upBtn
+
+                upBtn.Activated:Connect(function()
+                    state.ModifierPriority[mod.Name] = (mod.Priority or 50) + 5
+                    task.defer(renderModifierPriorityList)
+                end)
+
+                -- Nút giảm ưu tiên ▼ (-5)
+                local downBtn = Instance.new("TextButton")
+                downBtn.Size = UDim2.fromOffset(26, 12)
+                downBtn.Position = UDim2.new(1, -62, 0.5, 1)
+                downBtn.BackgroundColor3 = Color3.fromRGB(50, 52, 60)
+                downBtn.TextColor3 = C.silver
+                downBtn.Font = Enum.Font.GothamBold
+                downBtn.TextSize = 9
+                downBtn.Text = "▼"
+                downBtn.AutoButtonColor = false
+                downBtn.Active = true
+                downBtn.Parent = itemFrame
+                local dbCorner = Instance.new("UICorner")
+                dbCorner.CornerRadius = UDim.new(0, 3)
+                dbCorner.Parent = downBtn
+
+                downBtn.Activated:Connect(function()
+                    local current = mod.Priority or 50
+                    state.ModifierPriority[mod.Name] = math.max(0, current - 5)
+                    task.defer(renderModifierPriorityList)
+                end)
+
+                table.insert(modItems, itemFrame)
+            end
+        end
+
+        modSearchBox:GetPropertyChangedSignal("Text"):Connect(renderModifierPriorityList)
+        renderModifierPriorityList()
+
+        -- ====================================================================
+        -- 2. NHÓM RESTART (CON CỦA MODIFIERS)
+        -- ====================================================================
+        local restartSection = section(scroll, "Restart", "Restart", true)
+        stateToggle(restartSection, "Auto Restart After Waves", "RestartAfterWavesEnabled")
+        sliderItem(restartSection, "Restart at wave", state, "RestartAfterWaves", 1, 200, "")
+        stateToggle(restartSection, "Auto Restart If Don't Have Modifier", "RestartIfMissingModifier")
+
+        -- [BẢNG MODIFIER ĐỂ CHỌN MODIFIER YÊU CẦU]
+        local restartTableContainer = Instance.new("Frame")
+        restartTableContainer.Name = "RestartModifierTableContainer"
+        restartTableContainer.LayoutOrder = #restartSection:GetChildren()
+        restartTableContainer.Size = UDim2.new(1, 0, 0, 220)
+        restartTableContainer.BackgroundColor3 = C.row
+        restartTableContainer.BackgroundTransparency = 0.26
+        restartTableContainer.BorderSizePixel = 0
+        restartTableContainer.Active = true
+        restartTableContainer.Parent = restartSection
+        local rtcCorner = Instance.new("UICorner")
+        rtcCorner.CornerRadius = UDim.new(0, 8)
+        rtcCorner.Parent = restartTableContainer
+
+        -- Tiêu đề bảng
+        local restartTableHeader = Instance.new("TextLabel")
+        restartTableHeader.Size = UDim2.new(1, -24, 0, 26)
+        restartTableHeader.Position = UDim2.fromOffset(12, 6)
+        restartTableHeader.BackgroundTransparency = 1
+        restartTableHeader.Text = "Bảng chọn Modifier cần có (Required Modifiers):"
+        restartTableHeader.Font = Enum.Font.GothamSemibold
+        restartTableHeader.TextSize = 14
+        restartTableHeader.TextColor3 = C.silver
+        restartTableHeader.TextXAlignment = Enum.TextXAlignment.Left
+        restartTableHeader.Parent = restartTableContainer
+
+        -- Ô tìm kiếm trong bảng Restart
+        local restartSearchBox = Instance.new("TextBox")
+        restartSearchBox.Size = UDim2.new(1, -24, 0, 30)
+        restartSearchBox.Position = UDim2.fromOffset(12, 34)
+        restartSearchBox.BackgroundColor3 = C.track
+        restartSearchBox.BorderSizePixel = 0
+        restartSearchBox.PlaceholderText = "🔍 Tìm modifier..."
+        restartSearchBox.PlaceholderColor3 = C.muted
+        restartSearchBox.Text = ""
+        restartSearchBox.TextColor3 = C.silver
+        restartSearchBox.Font = Enum.Font.Gotham
+        restartSearchBox.TextSize = 13
+        restartSearchBox.ClearTextOnFocus = false
+        restartSearchBox.Parent = restartTableContainer
+        local rsbCorner = Instance.new("UICorner")
+        rsbCorner.CornerRadius = UDim.new(0, 6)
+        rsbCorner.Parent = restartSearchBox
+        local rsbPad = Instance.new("UIPadding")
+        rsbPad.PaddingLeft = UDim.new(0, 10)
+        rsbPad.Parent = restartSearchBox
+
+        -- Khung cuộn danh sách chọn Modifier
+        local restartScroll = Instance.new("ScrollingFrame")
+        restartScroll.Size = UDim2.new(1, -24, 1, -74)
+        restartScroll.Position = UDim2.fromOffset(12, 68)
+        restartScroll.BackgroundTransparency = 1
+        restartScroll.BorderSizePixel = 0
+        restartScroll.ScrollBarThickness = 4
+        restartScroll.ScrollBarImageColor3 = C.muted
+        restartScroll.ScrollingDirection = Enum.ScrollingDirection.Y
+        restartScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+        restartScroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+        restartScroll.Parent = restartTableContainer
+        local rslLayout = Instance.new("UIListLayout")
+        rslLayout.SortOrder = Enum.SortOrder.LayoutOrder
+        rslLayout.Padding = UDim.new(0, 4)
+        rslLayout.Parent = restartScroll
+
+        local restartItems = {}
+        local function renderRestartModifierList()
+            for _, child in ipairs(restartItems) do
+                child:Destroy()
+            end
+            table.clear(restartItems)
+
+            local list = (ModifierConfig and ModifierConfig.List) or {}
+            local query = string.lower(restartSearchBox.Text):match("^%s*(.-)%s*$") or ""
+
+            for _, mod in ipairs(list) do
+                local nameLower = string.lower(mod.Name)
+                local descLower = string.lower(mod.Desc or "")
+
+                if query == "" or nameLower:find(query, 1, true) or descLower:find(query, 1, true) then
+                    local itemRow = Instance.new("Frame")
+                    itemRow.Size = UDim2.new(1, -6, 0, 36)
+                    itemRow.BackgroundColor3 = C.subRow
+                    itemRow.BorderSizePixel = 0
+                    itemRow.Parent = restartScroll
+                    local irCorner = Instance.new("UICorner")
+                    irCorner.CornerRadius = UDim.new(0, 6)
+                    irCorner.Parent = itemRow
+
+                    local modNameLabel = Instance.new("TextLabel")
+                    modNameLabel.Size = UDim2.new(1, -90, 1, 0)
+                    modNameLabel.Position = UDim2.fromOffset(10, 0)
+                    modNameLabel.BackgroundTransparency = 1
+                    modNameLabel.Text = mod.Name
+                    modNameLabel.TextColor3 = C.silver
+                    modNameLabel.Font = Enum.Font.GothamSemibold
+                    modNameLabel.TextSize = 13
+                    modNameLabel.TextXAlignment = Enum.TextXAlignment.Left
+                    modNameLabel.TextTruncate = Enum.TextTruncate.AtEnd
+                    modNameLabel.Parent = itemRow
+
+                    local checkBtn = Instance.new("TextButton")
+                    checkBtn.Size = UDim2.fromOffset(68, 24)
+                    checkBtn.Position = UDim2.new(1, -76, 0.5, -12)
+                    checkBtn.BorderSizePixel = 0
+                    checkBtn.Font = Enum.Font.GothamBold
+                    checkBtn.TextSize = 11
+                    checkBtn.AutoButtonColor = false -- Không hover/click animation
+                    checkBtn.Active = true
+                    checkBtn.Parent = itemRow
+                    local cbCorner = Instance.new("UICorner")
+                    cbCorner.CornerRadius = UDim.new(0, 4)
+                    cbCorner.Parent = checkBtn
+
+                    local function updateCheckVisual()
+                        local isSelected = (state.SelectedModifiers[mod.Name] == true)
+                        checkBtn.BackgroundColor3 = isSelected and C.on or Color3.fromRGB(50, 52, 60)
+                        checkBtn.TextColor3 = isSelected and Color3.fromRGB(255, 255, 255) or C.muted
+                        checkBtn.Text = isSelected and "CHỌN ✓" or "BỎ QUA"
+                    end
+                    updateCheckVisual()
+
+                    checkBtn.Activated:Connect(function()
+                        state.SelectedModifiers[mod.Name] = not state.SelectedModifiers[mod.Name]
+                        updateCheckVisual()
+                    end)
+
+                    table.insert(restartItems, itemRow)
+                end
+            end
+        end
+
+        restartSearchBox:GetPropertyChangedSignal("Text"):Connect(renderRestartModifierList)
+        renderRestartModifierList()
+    end
+
+    -- [5] Đăng ký tab Modifiers với Menu chính
+    ui:RegisterTab("Modifiers", function()
+        buildModifiers()
+    end)
+end
+
+return Modifiers
+end)()
+-- END MODULE Modifiers
+
+-- BEGIN MODULE Gamemode
+Modules.Gamemode = (function()
+--[[
+    LotusHub / modules/Gamemode.lua — Tab Gamemode (Các chế độ chơi đặc biệt).
+    Cây thư mục tương ứng:
+      modules/Gamemode/
+        |-- Grand Prix/
+            |-- Auto join Grand Prix
+            |-- Auto Horse Racing
+        |-- Trail Of The Saint/
+            |-- Auto Trial Of The Saint
+]]
+local Gamemode = {}
+
+function Gamemode.Init(ctx, ui)
+    -- [1] State mặc định cho Gamemode
+    local defaults = {
+        AutoJoinGrandPrix = false,
+        AutoHorseRacing = false,
+        AutoTrialOfTheSaint = false,
+        TrialEndings = {
+            ["True ending"] = true,
+            ["Secret ending"] = false,
+        },
+    }
+    local state = ctx.state
+    for key, value in pairs(defaults) do
+        if state[key] == nil then state[key] = value end
+    end
+
+    -- [2] Trạng thái mở rộng nhóm mặc định
+    local defaultExpanded = {
+        GrandPrix = true,
+        TrailOfTheSaint = true,
+    }
+    for key, value in pairs(defaultExpanded) do
+        if ctx.expanded[key] == nil then ctx.expanded[key] = value end
+    end
+
+    -- [3] Bảng màu chuẩn LotusHub
+    local C = {
+        row = Color3.fromRGB(56, 58, 63),
+        subRow = Color3.fromRGB(42, 44, 49),
+        active = Color3.fromRGB(105, 111, 117),
+        silver = Color3.fromRGB(225, 228, 232),
+        muted = Color3.fromRGB(165, 171, 179),
+        track = Color3.fromRGB(17, 19, 23),
+        on = Color3.fromRGB(94, 116, 120),
+        border = Color3.fromRGB(80, 85, 95),
+        accent = Color3.fromRGB(55, 95, 150),
+    }
+
+    local scroll = ui.scroll
+    local section = ui.section
+    local stateToggle = ui.stateToggle
+    local infoItem = ui.infoItem
+
+    -- [4] Hàm dựng nội dung tab Gamemode
+    local function buildGamemode()
+        -- ====================================================================
+        -- 1. NHÓM GRAND PRIX
+        -- ====================================================================
+        local grandPrixSection = section(scroll, "GrandPrix", "Grand Prix", true)
+        stateToggle(grandPrixSection, "Auto join Grand Prix", "AutoJoinGrandPrix")
+        stateToggle(grandPrixSection, "Auto Horse Racing", "AutoHorseRacing")
+        infoItem(grandPrixSection, "Grand Prix: Tự động xác nhận Mount Picker và đua ngựa autopilot 1000 spd.")
+
+        -- ====================================================================
+        -- 2. NHÓM TRAIL OF THE SAINT
+        -- ====================================================================
+        local saintSection = section(scroll, "TrailOfTheSaint", "Trail Of The Saint", true)
+        stateToggle(saintSection, "Auto Trial Of The Saint", "AutoTrialOfTheSaint")
+
+        -- [BẢNG CHỌN GIỮA CÁC ENDING (Tương tự bảng Modifier)]
+        local endingContainer = Instance.new("Frame")
+        endingContainer.Name = "TrialEndingContainer"
+        endingContainer.LayoutOrder = #saintSection:GetChildren()
+        endingContainer.Size = UDim2.new(1, 0, 0, 140)
+        endingContainer.BackgroundColor3 = C.row
+        endingContainer.BackgroundTransparency = 0.26
+        endingContainer.BorderSizePixel = 0
+        endingContainer.Active = true
+        endingContainer.Parent = saintSection
+        local ecCorner = Instance.new("UICorner")
+        ecCorner.CornerRadius = UDim.new(0, 8)
+        ecCorner.Parent = endingContainer
+
+        local ecHeader = Instance.new("TextLabel")
+        ecHeader.Size = UDim2.new(1, -24, 0, 26)
+        ecHeader.Position = UDim2.fromOffset(12, 6)
+        ecHeader.BackgroundTransparency = 1
+        ecHeader.Text = "Bảng chọn Ending (Trial Of The Saint):"
+        ecHeader.Font = Enum.Font.GothamSemibold
+        ecHeader.TextSize = 14
+        ecHeader.TextColor3 = C.silver
+        ecHeader.TextXAlignment = Enum.TextXAlignment.Left
+        ecHeader.Parent = endingContainer
+
+        -- Danh sách các Ending
+        local endingList = {
+            { Name = "True ending", Desc = "Hoàn thành cốt truyện với True Ending" },
+            { Name = "Secret ending", Desc = "Hoàn thành cốt truyện với Secret Ending" },
+        }
+
+        local endingRows = Instance.new("Frame")
+        endingRows.Size = UDim2.new(1, -24, 0, 96)
+        endingRows.Position = UDim2.fromOffset(12, 36)
+        endingRows.BackgroundTransparency = 1
+        endingRows.Parent = endingContainer
+        local elLayout = Instance.new("UIListLayout")
+        elLayout.SortOrder = Enum.SortOrder.LayoutOrder
+        elLayout.Padding = UDim.new(0, 6)
+        elLayout.Parent = endingRows
+
+        for index, item in ipairs(endingList) do
+            local itemRow = Instance.new("Frame")
+            itemRow.Size = UDim2.new(1, 0, 0, 42)
+            itemRow.BackgroundColor3 = C.subRow
+            itemRow.BorderSizePixel = 0
+            itemRow.LayoutOrder = index
+            itemRow.Parent = endingRows
+            local irCorner = Instance.new("UICorner")
+            irCorner.CornerRadius = UDim.new(0, 6)
+            irCorner.Parent = itemRow
+
+            local nameLabel = Instance.new("TextLabel")
+            nameLabel.Size = UDim2.new(1, -95, 0, 20)
+            nameLabel.Position = UDim2.fromOffset(10, 3)
+            nameLabel.BackgroundTransparency = 1
+            nameLabel.Text = item.Name
+            nameLabel.TextColor3 = C.silver
+            nameLabel.Font = Enum.Font.GothamSemibold
+            nameLabel.TextSize = 13
+            nameLabel.TextXAlignment = Enum.TextXAlignment.Left
+            nameLabel.Parent = itemRow
+
+            local descLabel = Instance.new("TextLabel")
+            descLabel.Size = UDim2.new(1, -95, 0, 16)
+            descLabel.Position = UDim2.fromOffset(10, 22)
+            descLabel.BackgroundTransparency = 1
+            descLabel.Text = item.Desc
+            descLabel.TextColor3 = C.muted
+            descLabel.Font = Enum.Font.Gotham
+            descLabel.TextSize = 10
+            descLabel.TextXAlignment = Enum.TextXAlignment.Left
+            descLabel.Parent = itemRow
+
+            local selectBtn = Instance.new("TextButton")
+            selectBtn.Size = UDim2.fromOffset(72, 26)
+            selectBtn.Position = UDim2.new(1, -80, 0.5, -13)
+            selectBtn.BorderSizePixel = 0
+            selectBtn.Font = Enum.Font.GothamBold
+            selectBtn.TextSize = 11
+            selectBtn.AutoButtonColor = false -- Tắt animation giật
+            selectBtn.Active = true
+            selectBtn.Parent = itemRow
+            local sbCorner = Instance.new("UICorner")
+            sbCorner.CornerRadius = UDim.new(0, 4)
+            sbCorner.Parent = selectBtn
+
+            local function updateBtnVisual()
+                local isSelected = (state.TrialEndings[item.Name] == true)
+                selectBtn.BackgroundColor3 = isSelected and C.on or Color3.fromRGB(50, 52, 60)
+                selectBtn.TextColor3 = isSelected and Color3.fromRGB(255, 255, 255) or C.muted
+                selectBtn.Text = isSelected and "CHỌN ✓" or "BỎ QUA"
+            end
+            updateBtnVisual()
+
+            selectBtn.Activated:Connect(function()
+                state.TrialEndings[item.Name] = not state.TrialEndings[item.Name]
+                updateBtnVisual()
+            end)
+        end
+    end
+
+    -- [5] Đăng ký tab Gamemode với Menu chính
+    ui:RegisterTab("Gamemode", function()
+        buildGamemode()
+    end)
+end
+
+return Gamemode
+end)()
+-- END MODULE Gamemode
 
 -- BEGIN MODULE Match
 Modules.Match = (function()
@@ -1990,11 +2837,1662 @@ return Replay
 end)()
 -- END MODULE Replay
 
+-- BEGIN MODULE BoostPerformance
+Modules.BoostPerformance = (function()
+--[[
+    LOTUSHUB / modules/Gameplay/BoostPerformance.lua
+    ================================================
+    Module tối ưu hóa hiệu năng và tốc độ khung hình (Boost FPS).
+    
+    CHỨC NĂNG A: FreeFire Graphics (Boost FPS)
+      Khi ON:
+        1) Tắt GlobalShadows trong Lighting.
+        2) Vô hiệu hóa Bloom, Blur, DepthOfField, SunRays, ColorCorrection và các PostEffect.
+        3) Tắt/giảm các hiệu ứng hạt ParticleEmitter, Trail, Beam, Fire, Smoke, Sparkles.
+        4) Giảm chi tiết hiển thị: tắt CastShadow trên BasePart, chuyển Material sang SmoothPlastic,
+           ẩn Decal/Texture nặng, tắt Terrain Decoration (cỏ 3D) và giảm sóng nước Terrain.
+        5) Lắng nghe Workspace.DescendantAdded để tự động tối ưu quái vật và kỹ năng mới sinh ra trong trận.
+      Khi OFF:
+        Khôi phục toàn bộ các thuộc tính và trạng thái gốc đã lưu trước khi bật.
+]]
+local BoostPerformance = {}
+
+function BoostPerformance.Init(ctx, ui)
+    local state = ctx.state
+    local playerGui = ctx.playerGui
+    local Lighting = game:GetService("Lighting")
+    local Workspace = game:GetService("Workspace")
+    local Players = game:GetService("Players")
+    local player = Players.LocalPlayer or Players.PlayerAdded:Wait()
+
+    local session = {
+        active = false,
+        listenerConnection = nil,
+    }
+
+    -- Bảng lưu trữ trạng thái gốc để khôi phục khi OFF
+    local savedState = {
+        lighting = {},
+        terrain = {},
+        postEffects = {},     -- [instance] = originalEnabled
+        emitters = {},        -- [instance] = originalEnabled
+        trails = {},          -- [instance] = originalEnabled
+        beams = {},           -- [instance] = originalEnabled
+        miscEffects = {},     -- [instance] = originalEnabled (Fire, Smoke, Sparkles)
+        castShadows = {},     -- [part] = originalCastShadow
+        materials = {},       -- [part] = originalMaterial
+        decals = {},          -- [decal] = originalTransparency
+    }
+
+    local function log(message)
+        print("[LotusHub BoostPerformance] " .. message)
+    end
+
+    -- [1] TỐI ƯU HÓA POST-EFFECT TRONG LIGHTING VÀ CAMERA
+    local function optimizePostEffect(obj)
+        if not obj then return end
+        if obj:IsA("PostEffect") or obj:IsA("BloomEffect") or obj:IsA("BlurEffect")
+            or obj:IsA("DepthOfFieldEffect") or obj:IsA("SunRaysEffect")
+            or obj:IsA("ColorCorrectionEffect") or obj:IsA("Atmosphere") then
+            if savedState.postEffects[obj] == nil then
+                pcall(function()
+                    savedState.postEffects[obj] = obj.Enabled
+                    obj.Enabled = false
+                end)
+            end
+        end
+    end
+
+    -- [2] TỐI ƯU HÓA TỪNG INSTANCE ĐỐI TƯỢNG TRONG WORKSPACE
+    local function optimizeInstance(inst)
+        if not inst or not inst.Parent then return end
+
+        -- Bỏ qua GUI hiển thị của người chơi
+        if inst:IsDescendantOf(playerGui) then return end
+
+        -- Bỏ qua nhân vật của chính người chơi để không làm hỏng avatar
+        local char = player.Character
+        if char and inst:IsDescendantOf(char) then return end
+
+        -- A. Hiệu ứng hạt và ánh sáng động
+        if inst:IsA("ParticleEmitter") then
+            if savedState.emitters[inst] == nil then
+                savedState.emitters[inst] = inst.Enabled
+                inst.Enabled = false
+            end
+        elseif inst:IsA("Trail") then
+            if savedState.trails[inst] == nil then
+                savedState.trails[inst] = inst.Enabled
+                inst.Enabled = false
+            end
+        elseif inst:IsA("Beam") then
+            if savedState.beams[inst] == nil then
+                savedState.beams[inst] = inst.Enabled
+                inst.Enabled = false
+            end
+        elseif inst:IsA("Fire") or inst:IsA("Smoke") or inst:IsA("Sparkles") then
+            if savedState.miscEffects[inst] == nil then
+                savedState.miscEffects[inst] = inst.Enabled
+                inst.Enabled = false
+            end
+        -- B. Giảm chi tiết hình học của vật thể
+        elseif inst:IsA("BasePart") then
+            if inst.CastShadow and savedState.castShadows[inst] == nil then
+                savedState.castShadows[inst] = inst.CastShadow
+                inst.CastShadow = false
+            end
+            if inst.Material ~= Enum.Material.SmoothPlastic and inst.Material ~= Enum.Material.Plastic then
+                if savedState.materials[inst] == nil then
+                    savedState.materials[inst] = inst.Material
+                    inst.Material = Enum.Material.SmoothPlastic
+                end
+            end
+        elseif inst:IsA("Decal") or inst:IsA("Texture") then
+            if inst.Transparency < 1 and savedState.decals[inst] == nil then
+                savedState.decals[inst] = inst.Transparency
+                inst.Transparency = 1
+            end
+        end
+    end
+
+    -- [3] HÀM KÍCH HOẠT FREEFIRE GRAPHICS
+    local function enableFreeFire()
+        if session.active then return end
+        session.active = true
+        log("Đang áp dụng FreeFire Graphics (Boost FPS)...")
+
+        -- 1. Lighting: Tắt GlobalShadows
+        pcall(function()
+            if savedState.lighting.GlobalShadows == nil then
+                savedState.lighting.GlobalShadows = Lighting.GlobalShadows
+                Lighting.GlobalShadows = false
+            end
+        end)
+
+        -- 2. Lighting & Camera: Tắt Post-processing
+        for _, child in ipairs(Lighting:GetChildren()) do
+            optimizePostEffect(child)
+        end
+        local camera = Workspace.CurrentCamera
+        if camera then
+            for _, child in ipairs(camera:GetChildren()) do
+                optimizePostEffect(child)
+            end
+        end
+
+        -- 3. Terrain: Tắt cỏ 3D và sóng nước
+        pcall(function()
+            local terrain = Workspace:FindFirstChildOfClass("Terrain")
+            if terrain then
+                if savedState.terrain.Decoration == nil then
+                    savedState.terrain.Decoration = terrain.Decoration
+                    terrain.Decoration = false
+                end
+                if savedState.terrain.WaterWaveSize == nil then
+                    savedState.terrain.WaterWaveSize = terrain.WaterWaveSize
+                    terrain.WaterWaveSize = 0
+                end
+                if savedState.terrain.WaterWaveSpeed == nil then
+                    savedState.terrain.WaterWaveSpeed = terrain.WaterWaveSpeed
+                    terrain.WaterWaveSpeed = 0
+                end
+                if savedState.terrain.WaterReflectance == nil then
+                    savedState.terrain.WaterReflectance = terrain.WaterReflectance
+                    terrain.WaterReflectance = 0
+                end
+            end
+        end)
+
+        -- 4. Quét toàn bộ Workspace hiện có theo từng đợt để không giật lag
+        task.spawn(function()
+            local descendants = Workspace:GetDescendants()
+            for i, inst in ipairs(descendants) do
+                if not session.active or not ctx.alive then break end
+                pcall(optimizeInstance, inst)
+                if i % 1000 == 0 then
+                    task.wait()
+                end
+            end
+            log("Đã áp dụng tối ưu toàn bộ Workspace.")
+        end)
+
+        -- 5. Lắng nghe DescendantAdded để tự động xử lý kỹ năng/quái vật mới
+        if not session.listenerConnection then
+            session.listenerConnection = Workspace.DescendantAdded:Connect(function(inst)
+                if not session.active or not ctx.alive then return end
+                pcall(optimizeInstance, inst)
+            end)
+            table.insert(ctx.connections, session.listenerConnection)
+        end
+
+        log("FreeFire Graphics: ĐÃ BẬT.")
+    end
+
+    -- [4] HÀM KHÔI PHỤC ĐỒ HỌA GỐC
+    local function disableFreeFire()
+        if not session.active then return end
+        session.active = false
+        log("Đang khôi phục đồ họa và hiệu ứng gốc...")
+
+        -- 1. Ngắt kết nối lắng nghe
+        if session.listenerConnection then
+            pcall(function() session.listenerConnection:Disconnect() end)
+            session.listenerConnection = nil
+        end
+
+        -- 2. Khôi phục Lighting
+        pcall(function()
+            if savedState.lighting.GlobalShadows ~= nil then
+                Lighting.GlobalShadows = savedState.lighting.GlobalShadows
+            end
+        end)
+        savedState.lighting = {}
+
+        -- 3. Khôi phục PostEffects
+        for obj, origEnabled in pairs(savedState.postEffects) do
+            pcall(function()
+                if obj and obj.Parent then
+                    obj.Enabled = origEnabled
+                end
+            end)
+        end
+        savedState.postEffects = {}
+
+        -- 4. Khôi phục Terrain
+        pcall(function()
+            local terrain = Workspace:FindFirstChildOfClass("Terrain")
+            if terrain then
+                if savedState.terrain.Decoration ~= nil then
+                    terrain.Decoration = savedState.terrain.Decoration
+                end
+                if savedState.terrain.WaterWaveSize ~= nil then
+                    terrain.WaterWaveSize = savedState.terrain.WaterWaveSize
+                end
+                if savedState.terrain.WaterWaveSpeed ~= nil then
+                    terrain.WaterWaveSpeed = savedState.terrain.WaterWaveSpeed
+                end
+                if savedState.terrain.WaterReflectance ~= nil then
+                    terrain.WaterReflectance = savedState.terrain.WaterReflectance
+                end
+            end
+        end)
+        savedState.terrain = {}
+
+        -- 5. Khôi phục ParticleEmitter, Trail, Beam, Fire, v.v.
+        for obj, origEnabled in pairs(savedState.emitters) do
+            pcall(function()
+                if obj and obj.Parent then
+                    obj.Enabled = origEnabled
+                end
+            end)
+        end
+        savedState.emitters = {}
+
+        for obj, origEnabled in pairs(savedState.trails) do
+            pcall(function()
+                if obj and obj.Parent then
+                    obj.Enabled = origEnabled
+                end
+            end)
+        end
+        savedState.trails = {}
+
+        for obj, origEnabled in pairs(savedState.beams) do
+            pcall(function()
+                if obj and obj.Parent then
+                    obj.Enabled = origEnabled
+                end
+            end)
+        end
+        savedState.beams = {}
+
+        for obj, origEnabled in pairs(savedState.miscEffects) do
+            pcall(function()
+                if obj and obj.Parent then
+                    obj.Enabled = origEnabled
+                end
+            end)
+        end
+        savedState.miscEffects = {}
+
+        -- 6. Khôi phục BasePart (CastShadow & Material)
+        for part, origShadow in pairs(savedState.castShadows) do
+            pcall(function()
+                if part and part.Parent then
+                    part.CastShadow = origShadow
+                end
+            end)
+        end
+        savedState.castShadows = {}
+
+        for part, origMat in pairs(savedState.materials) do
+            pcall(function()
+                if part and part.Parent then
+                    part.Material = origMat
+                end
+            end)
+        end
+        savedState.materials = {}
+
+        -- 7. Khôi phục Decals / Textures
+        for decal, origTrans in pairs(savedState.decals) do
+            pcall(function()
+                if decal and decal.Parent then
+                    decal.Transparency = origTrans
+                end
+            end)
+        end
+        savedState.decals = {}
+
+        log("FreeFire Graphics: ĐÃ TẮT và khôi phục cài đặt gốc.")
+    end
+
+    -- [5] ĐĂNG KÝ TOGGLE HANDLER VỚI MENU
+    ui:SetToggleHandler("FreeFireGraphics", function(enabled)
+        if enabled then
+            enableFreeFire()
+        else
+            disableFreeFire()
+        end
+    end)
+
+    -- Khởi động nếu toggle đã bật sẵn từ trước
+    if state.FreeFireGraphics == true then
+        task.defer(enableFreeFire)
+    end
+end
+
+return BoostPerformance
+end)()
+-- END MODULE BoostPerformance
+
+-- BEGIN MODULE AutoPick
+Modules.AutoPick = (function()
+--[[
+    LotusHub / modules/Modifiers/AutoPick.lua — Tự động nhận diện và chọn Modifier (Thẻ bài).
+    Tích hợp từ raw source Auto Pick Modifiers (hỗ trợ cả Starter Cards & Additive Cards,
+    lọc số La Mã I, II, III... và số thường).
+    
+    Tuân thủ kiến trúc LotusHub:
+    - Vòng lặp kiểm tra ctx.alive, ngắt tức thì khi UI bị hủy hoặc Execute lại.
+    - Không tạo ScreenGui trôi nổi riêng biệt; giao diện tích hợp hoàn toàn trong LotusHub.
+    - Không sử dụng Tween/Hover animation trên các nút thao tác.
+]]
+local AutoPick = {}
+
+local Players = game:GetService("Players")
+local VirtualInputManager = game:GetService("VirtualInputManager")
+
+function AutoPick.Init(ctx, ui)
+    local player = Players.LocalPlayer
+    local playerGui = ctx.playerGui or (player and player:WaitForChild("PlayerGui"))
+    local state = ctx.state
+
+    -- [1] NẠP BẢNG CẤU HÌNH MODIFIERS
+    local ModifierConfig = ctx.ModifierConfig
+    if not ModifierConfig then
+        -- Fallback tìm trong package hoặc loadfile nếu chưa gắn vào ctx
+        local ok, mod = pcall(function()
+            return loadstring(readfile("LotusHub/modules/Modifiers/ModifierConfig.lua"))()
+        end)
+        if ok and type(mod) == "table" then
+            ModifierConfig = mod
+        else
+            -- Tối thiểu cần có table cấu hình mặc định
+            ModifierConfig = {
+                GetDefaultPriorityMap = function() return {} end,
+                NormalizeCardName = function(text, lookup)
+                    local clean = text:gsub("<[^>]+>", ""):match("^%s*(.-)%s*$") or ""
+                    local base = clean:gsub("%s+[IVXLCDM]+$", ""):gsub("%s+%d+$", ""):match("^%s*(.-)%s*$") or clean
+                    local score = lookup and lookup[string.lower(base)]
+                    return base, (score or -1)
+                end,
+                List = {}
+            }
+        end
+        ctx.ModifierConfig = ModifierConfig
+    end
+
+    -- Khởi tạo state mặc định cho Modifiers
+    if state.AutoPickModifiers == nil then
+        state.AutoPickModifiers = false
+    end
+    if type(state.ModifierPriority) ~= "table" then
+        state.ModifierPriority = {}
+    end
+
+    -- [2] TRẠNG THÁI NỘI BỘ CỦA WORKER
+    local session = {
+        hasVotedThisRound = false,
+        lastVoteTime = 0,
+        lastCardFound = "",
+    }
+
+    local function log(message)
+        print("[LotusHub AutoPick] " .. message)
+    end
+
+    local function getActivePriorityMap()
+        local baseMap = ModifierConfig.GetDefaultPriorityMap and ModifierConfig.GetDefaultPriorityMap() or {}
+        local activeMap = {}
+        for k, v in pairs(baseMap) do
+            activeMap[k] = v
+        end
+        -- Áp dụng các mức ưu tiên người dùng tùy chỉnh
+        for modName, customPrio in pairs(state.ModifierPriority) do
+            local num = tonumber(customPrio)
+            if num then
+                activeMap[string.lower(modName)] = math.floor(num)
+            end
+        end
+        return activeMap
+    end
+
+    -- Mô phỏng click chuột tại tọa độ màn hình
+    local function simulateClickAt(x, y)
+        if not VirtualInputManager then return end
+        pcall(function()
+            VirtualInputManager:SendMouseButtonEvent(x, y, 0, true, game, 0)
+            task.wait(0.04)
+            VirtualInputManager:SendMouseButtonEvent(x, y, 0, false, game, 0)
+        end)
+    end
+
+    -- [3] HÀM QUÉT VÀ BỎ PHIẾU CHỌN THẺ TỐT NHẤT
+    local function attemptPickCard()
+        if not ctx.alive or state.AutoPickModifiers ~= true then
+            return false
+        end
+
+        local priorityLookup = getActivePriorityMap()
+        local candidates = {}
+        local isVotePending = false
+
+        for _, gui in ipairs(playerGui:GetChildren()) do
+            if gui:IsA("ScreenGui") and gui.Enabled and gui ~= ctx.screen then
+                -- Bỏ qua GUI LotusHub chính để không nhận diện nhầm chữ trên menu
+                local guiName = gui.Name
+                if not guiName:find("LotusHub") then
+                    for _, label in ipairs(gui:GetDescendants()) do
+                        if label:IsA("TextLabel") and label.Visible then
+                            local text = label.Text
+                            if text:find("(0/1)") then
+                                isVotePending = true
+                            end
+
+                            if #text >= 3 then
+                                local baseName, score = ModifierConfig.NormalizeCardName(text, priorityLookup)
+                                if score >= 0 then
+                                    local pos = label.AbsolutePosition
+                                    local size = label.AbsoluteSize
+                                    if pos.X > 10 and pos.Y > 10 and size.X > 0 and size.Y > 0 then
+                                        local cardContainer = label:FindFirstAncestorWhichIsA("Frame") or label
+                                        local cardCenter = cardContainer.AbsolutePosition + (cardContainer.AbsoluteSize / 2)
+
+                                        table.insert(candidates, {
+                                            Original = text,
+                                            BaseName = baseName,
+                                            Score = score,
+                                            ClickX = cardCenter.X,
+                                            ClickY = cardCenter.Y,
+                                            Element = cardContainer
+                                        })
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+
+        if #candidates > 0 and (isVotePending or not session.hasVotedThisRound) then
+            -- Khử trùng lặp thẻ
+            local uniqueCandidates = {}
+            local seen = {}
+            for _, c in ipairs(candidates) do
+                if not seen[c.Original] then
+                    seen[c.Original] = true
+                    table.insert(uniqueCandidates, c)
+                end
+            end
+
+            -- Sắp xếp giảm dần theo điểm ưu tiên Score
+            table.sort(uniqueCandidates, function(a, b)
+                return a.Score > b.Score
+            end)
+
+            local chosen = uniqueCandidates[1]
+            session.hasVotedThisRound = true
+            session.lastVoteTime = tick()
+            session.lastCardFound = chosen.BaseName
+
+            log(string.format("Đã chọn thẻ tối ưu: '%s' (Gốc: '%s' | Ưu tiên: %d) tại (%d, %d)",
+                chosen.BaseName, chosen.Original, chosen.Score, chosen.ClickX, chosen.ClickY))
+
+            task.spawn(function()
+                -- Bước 1: Thử gọi tín hiệu nút nếu có firesignal
+                if type(firesignal) == "function" then
+                    local btn = chosen.Element:FindFirstChildWhichIsA("GuiButton", true)
+                    if btn then
+                        pcall(function() firesignal(btn.MouseButton1Click) end)
+                        pcall(function() firesignal(btn.Activated) end)
+                    end
+                end
+
+                -- Bước 2: Mô phỏng click chuột vào tâm thẻ và nút Vote bên dưới
+                simulateClickAt(chosen.ClickX, chosen.ClickY)
+                task.wait(0.05)
+                simulateClickAt(chosen.ClickX, chosen.ClickY + 110)
+            end)
+
+            return true
+        end
+
+        return false
+    end
+
+    -- [4] VÒNG LẶP POLLING TỰ ĐỘNG QUÉT THẺ MODIFIER
+    task.spawn(function()
+        while ctx.alive do
+            task.wait(0.3)
+
+            if state.AutoPickModifiers == true then
+                local isCardWindowOpen = false
+
+                for _, gui in ipairs(playerGui:GetChildren()) do
+                    if gui:IsA("ScreenGui") and gui.Enabled and gui ~= ctx.screen then
+                        local guiName = gui.Name
+                        if not guiName:find("LotusHub") then
+                            for _, label in ipairs(gui:GetDescendants()) do
+                                if label:IsA("TextLabel") and label.Visible then
+                                    local t = label.Text
+                                    if t:find("Additive Cards")
+                                        or t:find("Starter Cards")
+                                        or t:find("Automatically ends")
+                                        or t:find("Click to vote") then
+                                        isCardWindowOpen = true
+                                        break
+                                    end
+                                end
+                            end
+                        end
+                    end
+                    if isCardWindowOpen then break end
+                end
+
+                if not isCardWindowOpen then
+                    if session.hasVotedThisRound then
+                        session.hasVotedThisRound = false
+                    end
+                else
+                    if tick() - session.lastVoteTime > 2.2 then
+                        attemptPickCard()
+                    end
+                end
+            end
+        end
+        log("Worker AutoPick đã dừng an toàn do ctx.alive = false.")
+    end)
+
+    -- [5] ĐĂNG KÝ TOGGLE HANDLER VỚI UI
+    if type(ui.SetToggleHandler) == "function" then
+        ui:SetToggleHandler("AutoPickModifiers", function(enabled)
+            log("AutoPickModifiers = " .. tostring(enabled))
+            if enabled then
+                session.hasVotedThisRound = false
+                session.lastVoteTime = 0
+                task.spawn(function()
+                    task.wait(0.05)
+                    attemptPickCard()
+                end)
+            end
+        end)
+    end
+end
+
+return AutoPick
+end)()
+-- END MODULE AutoPick
+
+-- BEGIN MODULE RestartAfterWaves
+Modules.RestartAfterWaves = (function()
+--[[
+    LotusHub / modules/Restart/RestartAfterWaves.lua
+    Tính năng: Auto Restart After Waves (Tự động Restart trận khi đạt tới số Wave chỉ định).
+    Có thanh giá trị (slider) để chọn số Wave mục tiêu (1..200).
+]]
+local RestartAfterWaves = {}
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local VirtualInputManager = game:GetService("VirtualInputManager")
+
+function RestartAfterWaves.Init(ctx, ui)
+    local player = Players.LocalPlayer
+    local playerGui = ctx.playerGui or (player and player:WaitForChild("PlayerGui"))
+    local state = ctx.state
+
+    -- Cấu hình mặc định
+    if state.RestartAfterWavesEnabled == nil then
+        state.RestartAfterWavesEnabled = false
+    end
+    if state.RestartAfterWaves == nil then
+        state.RestartAfterWaves = 10
+    end
+
+    local session = {
+        lastTriggeredWave = -1,
+        isRestarting = false,
+        lastAttemptTime = 0,
+    }
+
+    local function log(message)
+        print("[LotusHub RestartAfterWaves] " .. message)
+    end
+
+    -- Tìm hiển thị số Wave hiện tại trong trận đấu
+    local function getCurrentWave()
+        local hud = playerGui:FindFirstChild("HUD")
+        if hud then
+            local map = hud:FindFirstChild("Map")
+            local waves = map and map:FindFirstChild("WavesAmount")
+            if waves and waves:IsA("TextLabel") and waves.Visible then
+                local num = tonumber(waves.Text:match("%d+"))
+                if num then return num end
+            end
+        end
+
+        -- Fallback quét tìm nhãn Wave bất kỳ trên màn hình
+        for _, gui in ipairs(playerGui:GetChildren()) do
+            if gui:IsA("ScreenGui") and gui.Enabled and gui ~= ctx.screen then
+                local guiName = gui.Name
+                if not guiName:find("LotusHub") then
+                    for _, label in ipairs(gui:GetDescendants()) do
+                        if label:IsA("TextLabel") and label.Visible then
+                            local t = label.Text
+                            if t:find("Wave") or t:find("WAVE") then
+                                local num = tonumber(t:match("%d+"))
+                                if num then return num end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+
+        return nil
+    end
+
+    -- Kích hoạt hành động Restart / Chơi lại trận
+    local function executeRestart()
+        if session.isRestarting then return end
+        session.isRestarting = true
+        log("Đạt số Wave mục tiêu -> Đang thực hiện Restart...")
+
+        task.spawn(function()
+            -- Cách 1: Thử nhấn nút Retry trên giao diện kết trận nếu có
+            local retryBtn = nil
+            local hud = playerGui:FindFirstChild("HUD")
+            local endFrame = hud and hud:FindFirstChild("EndFrame")
+            if endFrame and endFrame.Visible then
+                retryBtn = endFrame:FindFirstChild("Retry", true)
+            end
+            local endScreen = playerGui:FindFirstChild("EndScreen")
+            if endScreen and endScreen.Enabled then
+                local holder = endScreen:FindFirstChild("Holder")
+                local buttons = holder and holder:FindFirstChild("Buttons")
+                if buttons then
+                    retryBtn = buttons:FindFirstChild("Retry", true) or retryBtn
+                end
+            end
+
+            if retryBtn then
+                local clickTarget = retryBtn:FindFirstChildWhichIsA("GuiButton", true) or (retryBtn:IsA("GuiButton") and retryBtn)
+                if clickTarget then
+                    if type(firesignal) == "function" then
+                        pcall(function() firesignal(clickTarget.MouseButton1Click) end)
+                        pcall(function() firesignal(clickTarget.Activated) end)
+                    end
+                    if VirtualInputManager and clickTarget.AbsoluteSize.X > 0 then
+                        local center = clickTarget.AbsolutePosition + (clickTarget.AbsoluteSize / 2)
+                        VirtualInputManager:SendMouseButtonEvent(center.X, center.Y, 0, true, game, 0)
+                        task.wait(0.04)
+                        VirtualInputManager:SendMouseButtonEvent(center.X, center.Y, 0, false, game, 0)
+                    end
+                    log("Đã click nút Retry trên GUI.")
+                end
+            end
+
+            -- Cách 2: Gửi remote Retry nếu có
+            local RETRY_REMOTE_NAME = "AV_GAME_ENDSCREEN_V1_BLINK_RELIABLE_REMOTE"
+            local retryRemote = ReplicatedStorage:FindFirstChild(RETRY_REMOTE_NAME)
+            if retryRemote and retryRemote:IsA("RemoteEvent") then
+                pcall(function()
+                    retryRemote:FireServer(buffer.fromstring("\003"))
+                end)
+                log("Đã gửi Remote Retry buffer 0x03")
+            end
+
+            -- Cách 3: Gửi remote MATCH_FLOW nếu trận chưa kết thúc để thoát về / restart
+            local MATCH_FLOW_REMOTE = "AV_GAME_MATCH_FLOW_V1_BLINK_RELIABLE_REMOTE"
+            local matchFlow = ReplicatedStorage:FindFirstChild(MATCH_FLOW_REMOTE)
+            if matchFlow and matchFlow:IsA("RemoteEvent") then
+                pcall(function()
+                    matchFlow:FireServer(buffer.fromstring("\003"))
+                end)
+            end
+
+            task.wait(3)
+            session.isRestarting = false
+        end)
+    end
+
+    -- [WORKER POLLING]
+    task.spawn(function()
+        while ctx.alive do
+            task.wait(0.5)
+
+            if state.RestartAfterWavesEnabled == true then
+                local targetWave = math.clamp(math.floor(tonumber(state.RestartAfterWaves) or 10), 1, 200)
+                local currentWave = getCurrentWave()
+
+                if currentWave and currentWave >= targetWave then
+                    if session.lastTriggeredWave ~= currentWave and (tick() - session.lastAttemptTime > 10) then
+                        session.lastTriggeredWave = currentWave
+                        session.lastAttemptTime = tick()
+                        log(string.format("Wave hiện tại (%d) >= Mục tiêu (%d)!", currentWave, targetWave))
+                        executeRestart()
+                    end
+                elseif currentWave and currentWave < targetWave then
+                    -- Reset khi bắt đầu trận mới ở wave thấp hơn
+                    session.lastTriggeredWave = -1
+                end
+            end
+        end
+        log("Worker RestartAfterWaves đã dừng an toàn.")
+    end)
+
+    if type(ui.SetToggleHandler) == "function" then
+        ui:SetToggleHandler("RestartAfterWavesEnabled", function(enabled)
+            log("RestartAfterWavesEnabled = " .. tostring(enabled))
+        end)
+    end
+end
+
+return RestartAfterWaves
+end)()
+-- END MODULE RestartAfterWaves
+
+-- BEGIN MODULE RestartIfMissingModifier
+Modules.RestartIfMissingModifier = (function()
+--[[
+    LotusHub / modules/Restart/RestartIfMissingModifier.lua
+    Tính năng: Auto Restart If Don't Have Modifier.
+    Hiện bảng Modifier để người dùng chọn các Modifier mong muốn (Required Modifiers).
+    Nếu sau vòng chọn thẻ mà không sở hữu modifier mong muốn, tự động restart trận.
+]]
+local RestartIfMissingModifier = {}
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local VirtualInputManager = game:GetService("VirtualInputManager")
+
+function RestartIfMissingModifier.Init(ctx, ui)
+    local player = Players.LocalPlayer
+    local playerGui = ctx.playerGui or (player and player:WaitForChild("PlayerGui"))
+    local state = ctx.state
+
+    if state.RestartIfMissingModifier == nil then
+        state.RestartIfMissingModifier = false
+    end
+    if type(state.SelectedModifiers) ~= "table" then
+        state.SelectedModifiers = {}
+    end
+
+    local session = {
+        checkedThisRound = false,
+        isRestarting = false,
+        lastAttemptTime = 0,
+        lastCardModalSeen = 0,
+    }
+
+    local function log(message)
+        print("[LotusHub RestartIfMissingModifier] " .. message)
+    end
+
+    -- Đếm số modifier người dùng yêu cầu
+    local function getRequiredCount()
+        local count = 0
+        for _, req in pairs(state.SelectedModifiers) do
+            if req == true then count = count + 1 end
+        end
+        return count
+    end
+
+    -- Kiểm tra xem thẻ Modifier mong muốn có xuất hiện trong danh sách buff/thẻ hiện tại không
+    local function hasAnyRequiredModifier()
+        local requiredCount = getRequiredCount()
+        if requiredCount == 0 then return true end -- Không chọn modifier nào thì xem như thỏa mãn
+
+        -- 1. Quét PlayerGui (HUD / Buff list / Cards)
+        for _, gui in ipairs(playerGui:GetChildren()) do
+            if gui:IsA("ScreenGui") and gui.Enabled and gui ~= ctx.screen then
+                local guiName = gui.Name
+                if not guiName:find("LotusHub") then
+                    for _, label in ipairs(gui:GetDescendants()) do
+                        if label:IsA("TextLabel") and label.Visible then
+                            local t = label.Text
+                            for modName, isRequired in pairs(state.SelectedModifiers) do
+                                if isRequired == true and t:find(modName, 1, true) then
+                                    return true
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+
+        return false
+    end
+
+    -- Kích hoạt restart
+    local function executeRestart()
+        if session.isRestarting then return end
+        session.isRestarting = true
+        log("Không tìm thấy Modifier mong muốn -> Đang kích hoạt Restart...")
+
+        task.spawn(function()
+            -- Thử nút Retry
+            local retryBtn = nil
+            local hud = playerGui:FindFirstChild("HUD")
+            local endFrame = hud and hud:FindFirstChild("EndFrame")
+            if endFrame and endFrame.Visible then
+                retryBtn = endFrame:FindFirstChild("Retry", true)
+            end
+            local endScreen = playerGui:FindFirstChild("EndScreen")
+            if endScreen and endScreen.Enabled then
+                local holder = endScreen:FindFirstChild("Holder")
+                local buttons = holder and holder:FindFirstChild("Buttons")
+                if buttons then
+                    retryBtn = buttons:FindFirstChild("Retry", true) or retryBtn
+                end
+            end
+
+            if retryBtn then
+                local clickTarget = retryBtn:FindFirstChildWhichIsA("GuiButton", true) or (retryBtn:IsA("GuiButton") and retryBtn)
+                if clickTarget then
+                    if type(firesignal) == "function" then
+                        pcall(function() firesignal(clickTarget.MouseButton1Click) end)
+                        pcall(function() firesignal(clickTarget.Activated) end)
+                    end
+                    if VirtualInputManager and clickTarget.AbsoluteSize.X > 0 then
+                        local center = clickTarget.AbsolutePosition + (clickTarget.AbsoluteSize / 2)
+                        VirtualInputManager:SendMouseButtonEvent(center.X, center.Y, 0, true, game, 0)
+                        task.wait(0.04)
+                        VirtualInputManager:SendMouseButtonEvent(center.X, center.Y, 0, false, game, 0)
+                    end
+                end
+            end
+
+            -- Gửi remote Retry nếu có
+            local RETRY_REMOTE_NAME = "AV_GAME_ENDSCREEN_V1_BLINK_RELIABLE_REMOTE"
+            local retryRemote = ReplicatedStorage:FindFirstChild(RETRY_REMOTE_NAME)
+            if retryRemote and retryRemote:IsA("RemoteEvent") then
+                pcall(function()
+                    retryRemote:FireServer(buffer.fromstring("\003"))
+                end)
+            end
+
+            -- Gửi remote MATCH_FLOW nếu trong trận
+            local MATCH_FLOW_REMOTE = "AV_GAME_MATCH_FLOW_V1_BLINK_RELIABLE_REMOTE"
+            local matchFlow = ReplicatedStorage:FindFirstChild(MATCH_FLOW_REMOTE)
+            if matchFlow and matchFlow:IsA("RemoteEvent") then
+                pcall(function()
+                    matchFlow:FireServer(buffer.fromstring("\003"))
+                end)
+            end
+
+            task.wait(3)
+            session.isRestarting = false
+        end)
+    end
+
+    -- [WORKER POLLING]
+    task.spawn(function()
+        while ctx.alive do
+            task.wait(0.5)
+
+            if state.RestartIfMissingModifier == true and getRequiredCount() > 0 then
+                -- Kiểm tra xem bảng chọn thẻ có đang mở không
+                local isCardWindowOpen = false
+                for _, gui in ipairs(playerGui:GetChildren()) do
+                    if gui:IsA("ScreenGui") and gui.Enabled and gui ~= ctx.screen then
+                        if not gui.Name:find("LotusHub") then
+                            for _, label in ipairs(gui:GetDescendants()) do
+                                if label:IsA("TextLabel") and label.Visible then
+                                    local t = label.Text
+                                    if t:find("Additive Cards") or t:find("Starter Cards") or t:find("Click to vote") then
+                                        isCardWindowOpen = true
+                                        break
+                                    end
+                                end
+                            end
+                        end
+                    end
+                    if isCardWindowOpen then break end
+                end
+
+                if isCardWindowOpen then
+                    session.lastCardModalSeen = tick()
+                    session.checkedThisRound = false
+                else
+                    -- Sau khi bảng chọn thẻ vừa đóng được 3 giây, tiến hành kiểm tra
+                    if session.lastCardModalSeen > 0 and (tick() - session.lastCardModalSeen > 3) and not session.checkedThisRound then
+                        session.checkedThisRound = true
+                        local hasMod = hasAnyRequiredModifier()
+                        if not hasMod then
+                            log("Kiểm tra sau vòng chọn thẻ: KHÔNG có Modifier mong muốn!")
+                            executeRestart()
+                        else
+                            log("Kiểm tra sau vòng chọn thẻ: ĐÃ CÓ Modifier mong muốn.")
+                        end
+                    end
+                end
+            end
+        end
+        log("Worker RestartIfMissingModifier đã dừng an toàn.")
+    end)
+
+    if type(ui.SetToggleHandler) == "function" then
+        ui:SetToggleHandler("RestartIfMissingModifier", function(enabled)
+            log("RestartIfMissingModifier = " .. tostring(enabled))
+        end)
+    end
+end
+
+return RestartIfMissingModifier
+end)()
+-- END MODULE RestartIfMissingModifier
+
+-- BEGIN MODULE AutoJoinGrandPrix
+Modules.AutoJoinGrandPrix = (function()
+--[[
+    LotusHub / modules/Gamemode/Grand Prix/Auto join Grand Prix.lua
+    Chức năng: Tự động nhận diện và xác nhận tham gia Grand Prix (Auto Confirm Mount Picker).
+    Nguồn: Trích xuất từ raw Grand Prix Engine do người dùng cung cấp.
+]]
+local AutoJoinGrandPrix = {}
+
+local Players = game:GetService("Players")
+local VirtualInputManager = game:GetService("VirtualInputManager")
+
+function AutoJoinGrandPrix.Init(ctx, ui)
+    local player = Players.LocalPlayer
+    local playerGui = ctx.playerGui or (player and player:WaitForChild("PlayerGui"))
+    local state = ctx.state
+
+    if state.AutoJoinGrandPrix == nil then
+        state.AutoJoinGrandPrix = false
+    end
+
+    local lastConfirmed = 0
+
+    local function log(message)
+        print("[LotusHub GrandPrix] " .. message)
+    end
+
+    -- Kiểm tra và tự động bấm nút Confirm trong GrandPrixMountPicker
+    local function checkMountPicker()
+        if not ctx.alive or state.AutoJoinGrandPrix ~= true then return end
+
+        local grandPrixGui = playerGui:FindFirstChild("GrandPrix")
+        if not grandPrixGui then return end
+
+        local mountPicker = grandPrixGui:FindFirstChild("GrandPrixMountPicker", true)
+        if not mountPicker then return end
+
+        local confirmGroup = mountPicker:FindFirstChild("Confirm", true)
+        local confirmBtn = nil
+
+        if confirmGroup then
+            local clickable = confirmGroup:FindFirstChild("Clickable", true)
+            if clickable and clickable:IsA("TextButton") then
+                confirmBtn = clickable
+            end
+        end
+
+        if not confirmBtn then
+            local buyGroup = mountPicker:FindFirstChild("Buy", true)
+            if buyGroup then
+                local clickable = buyGroup:FindFirstChild("Clickable", true)
+                if clickable and clickable:IsA("TextButton") then
+                    confirmBtn = clickable
+                end
+            end
+        end
+
+        -- Nhận diện và click khi nút xuất hiện trên màn hình
+        if confirmBtn and confirmBtn.AbsoluteSize.X > 10 and confirmBtn.AbsoluteSize.Y > 10 then
+            if tick() - lastConfirmed > 1.2 then
+                lastConfirmed = tick()
+
+                if type(firesignal) == "function" then
+                    pcall(function() firesignal(confirmBtn.MouseButton1Down) end)
+                    pcall(function() firesignal(confirmBtn.MouseButton1Click) end)
+                    pcall(function() firesignal(confirmBtn.MouseButton1Up) end)
+                    pcall(function() firesignal(confirmBtn.Activated) end)
+                end
+
+                if VirtualInputManager then
+                    local center = confirmBtn.AbsolutePosition + (confirmBtn.AbsoluteSize / 2)
+                    pcall(function()
+                        VirtualInputManager:SendMouseButtonEvent(math.floor(center.X), math.floor(center.Y), 0, true, game, 0)
+                        task.wait(0.04)
+                        VirtualInputManager:SendMouseButtonEvent(math.floor(center.X), math.floor(center.Y), 0, false, game, 0)
+                    end)
+                end
+
+                log("Đã bấm Confirm Mount Picker -> Tham gia Grand Prix thành công!")
+            end
+        end
+    end
+
+    -- Worker chạy ngầm kiểm tra định kỳ (chu kỳ 0.5s, ngắt sạch khi ctx.alive = false)
+    task.spawn(function()
+        while ctx.alive do
+            task.wait(0.5)
+            if state.AutoJoinGrandPrix == true then
+                checkMountPicker()
+            end
+        end
+        log("Worker AutoJoinGrandPrix đã dừng an toàn do ctx.alive = false.")
+    end)
+
+    if type(ui.SetToggleHandler) == "function" then
+        ui:SetToggleHandler("AutoJoinGrandPrix", function(enabled)
+            log("AutoJoinGrandPrix = " .. tostring(enabled))
+            if enabled then
+                lastConfirmed = 0
+                task.spawn(checkMountPicker)
+            end
+        end)
+    end
+end
+
+return AutoJoinGrandPrix
+end)()
+-- END MODULE AutoJoinGrandPrix
+
+-- BEGIN MODULE AutoHorseRacing
+Modules.AutoHorseRacing = (function()
+--[[
+    LotusHub / modules/Gamemode/Grand Prix/Auto Horse Racing.lua
+    Chức năng: Tự động đua ngựa trong Grand Prix (Autopilot đa Map, NoClip, 1000 spd, Watchdog 8s).
+    Nguồn: Trích xuất từ raw Grand Prix Autonomous Full-Auto Engine.
+]]
+local AutoHorseRacing = {}
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Workspace = game:GetService("Workspace")
+
+function AutoHorseRacing.Init(ctx, ui)
+    local player = Players.LocalPlayer
+    local state = ctx.state
+
+    if state.AutoHorseRacing == nil then
+        state.AutoHorseRacing = false
+    end
+
+    local function log(message)
+        print("[LotusHub HorseRacing] " .. message)
+    end
+
+    -- ==========================================================
+    -- 1. TỌA ĐỘ 3 MAP (RECORDED TRACKS)
+    -- ==========================================================
+    local RecordedTracks = {
+        [1] = {
+            Vector3.new(167.53, 702.14, -249.38), Vector3.new(168.15, 701.66, -241.69),
+            Vector3.new(169.17, 701.00, -227.81), Vector3.new(169.08, 700.79, -218.50),
+            Vector3.new(167.98, 700.43, -200.76), Vector3.new(165.70, 699.37, -186.41),
+            Vector3.new(161.35, 697.58, -163.07), Vector3.new(158.32, 697.00, -145.84),
+            Vector3.new(157.28, 697.16, -131.90), Vector3.new(157.14, 698.35, -108.45),
+            Vector3.new(156.98, 700.91, -76.27),  Vector3.new(156.93, 702.58, -48.01),
+            Vector3.new(156.88, 703.01, -29.68),  Vector3.new(157.78, 702.59, -15.49),
+            Vector3.new(158.87, 701.78, -3.57),   Vector3.new(158.33, 700.99, 5.41),
+            Vector3.new(156.44, 699.65, 19.52),   Vector3.new(152.52, 698.56, 33.11),
+            Vector3.new(146.36, 697.36, 49.54),   Vector3.new(139.14, 696.07, 67.02),
+            Vector3.new(132.97, 695.32, 78.35),   Vector3.new(125.29, 694.55, 89.39),
+            Vector3.new(117.40, 693.73, 98.61),   Vector3.new(109.15, 692.68, 106.38),
+            Vector3.new(98.73, 691.16, 112.58),   Vector3.new(86.92, 689.69, 116.51),
+            Vector3.new(75.51, 689.88, 119.28),   Vector3.new(63.06, 690.54, 121.78),
+            Vector3.new(51.28, 690.39, 123.89),   Vector3.new(38.05, 690.01, 124.67),
+            Vector3.new(25.39, 689.23, 124.44),   Vector3.new(13.10, 687.90, 123.91),
+            Vector3.new(0.55, 685.67, 123.08),    Vector3.new(-11.55, 684.21, 123.09),
+            Vector3.new(-23.84, 682.94, 123.35),  Vector3.new(-36.35, 682.18, 123.84),
+            Vector3.new(-49.10, 680.39, 124.31),  Vector3.new(-61.22, 678.49, 124.44),
+            Vector3.new(-73.42, 677.61, 123.20),  Vector3.new(-85.33, 676.84, 121.05),
+            Vector3.new(-97.55, 676.31, 117.65),  Vector3.new(-110.65, 675.79, 113.16),
+            Vector3.new(-122.48, 675.43, 108.99), Vector3.new(-134.48, 675.08, 105.78),
+            Vector3.new(-147.21, 673.97, 105.16), Vector3.new(-160.56, 672.66, 106.58),
+            Vector3.new(-174.15, 672.35, 106.99), Vector3.new(-186.91, 673.57, 106.73),
+            Vector3.new(-198.44, 675.43, 106.34), Vector3.new(-210.79, 677.54, 104.67),
+            Vector3.new(-222.14, 679.46, 100.63), Vector3.new(-234.18, 681.70, 94.93),
+            Vector3.new(-244.23, 683.68, 88.31),  Vector3.new(-256.47, 686.43, 79.10),
+            Vector3.new(-268.81, 689.48, 66.81),  Vector3.new(-278.99, 692.32, 52.33),
+            Vector3.new(-287.62, 695.07, 38.56),  Vector3.new(-293.49, 697.36, 21.27),
+            Vector3.new(-294.81, 698.61, 3.77),   Vector3.new(-295.22, 699.85, -14.70),
+            Vector3.new(-295.60, 701.06, -33.93), Vector3.new(-295.48, 701.90, -48.08),
+            Vector3.new(-294.19, 702.46, -60.98), Vector3.new(-292.80, 700.69, -74.13),
+            Vector3.new(-291.46, 696.54, -88.58), Vector3.new(-290.33, 692.11, -100.23),
+            Vector3.new(-289.01, 687.36, -113.62), Vector3.new(-287.49, 687.64, -127.83),
+            Vector3.new(-285.74, 690.57, -143.06), Vector3.new(-283.88, 689.85, -157.05),
+            Vector3.new(-281.86, 685.87, -170.71), Vector3.new(-279.76, 678.57, -183.97),
+            Vector3.new(-276.81, 674.93, -196.78), Vector3.new(-271.96, 673.68, -209.52),
+            Vector3.new(-265.00, 672.35, -225.96), Vector3.new(-258.55, 671.47, -241.07),
+            Vector3.new(-251.92, 671.02, -259.52), Vector3.new(-247.01, 671.01, -282.88),
+            Vector3.new(-243.63, 671.01, -300.22), Vector3.new(-239.08, 671.01, -317.10),
+            Vector3.new(-233.69, 671.01, -334.98), Vector3.new(-227.92, 671.12, -354.35),
+            Vector3.new(-223.59, 671.23, -375.62), Vector3.new(-219.38, 671.72, -391.17),
+            Vector3.new(-216.38, 673.73, -408.12), Vector3.new(-213.19, 677.31, -427.79),
+            Vector3.new(-209.85, 680.90, -448.49), Vector3.new(-206.59, 682.50, -468.67),
+            Vector3.new(-198.85, 682.50, -469.97), Vector3.new(-200.28, 682.49, -480.88),
+            Vector3.new(-199.73, 682.08, -496.70), Vector3.new(-198.32, 681.29, -512.14),
+            Vector3.new(-195.24, 680.10, -529.21), Vector3.new(-191.67, 678.51, -548.34),
+            Vector3.new(-188.36, 678.30, -567.84), Vector3.new(-186.46, 676.94, -584.90),
+            Vector3.new(-185.89, 675.51, -603.78), Vector3.new(-184.57, 674.43, -621.55),
+            Vector3.new(-183.72, 674.00, -639.43), Vector3.new(-182.88, 673.96, -656.88),
+            Vector3.new(-181.77, 673.04, -676.45), Vector3.new(-178.68, 672.09, -694.78),
+            Vector3.new(-173.55, 670.58, -718.38), Vector3.new(-168.06, 669.27, -744.24),
+            Vector3.new(-162.57, 669.00, -773.13), Vector3.new(-158.44, 670.21, -789.67),
+            Vector3.new(-155.47, 672.36, -811.72), Vector3.new(-157.12, 672.00, -829.57),
+            Vector3.new(-168.05, 671.18, -844.50), Vector3.new(-185.04, 670.52, -858.94),
+            Vector3.new(-202.75, 671.72, -873.37), Vector3.new(-218.46, 673.97, -886.09),
+            Vector3.new(-234.56, 674.04, -902.06), Vector3.new(-243.05, 673.61, -918.71),
+            Vector3.new(-245.04, 673.53, -935.89), Vector3.new(-241.24, 673.75, -951.16),
+            Vector3.new(-231.10, 674.15, -963.80), Vector3.new(-216.84, 674.71, -968.86),
+            Vector3.new(-200.66, 675.42, -968.17), Vector3.new(-182.69, 676.12, -966.91),
+            Vector3.new(-166.31, 676.46, -967.39), Vector3.new(-148.41, 676.86, -971.22),
+            Vector3.new(-132.56, 676.93, -977.30), Vector3.new(-118.66, 676.78, -987.82),
+            Vector3.new(-105.18, 677.89, -1000.11), Vector3.new(-90.64, 680.28, -1011.42),
+            Vector3.new(-76.31, 682.05, -1027.79), Vector3.new(-61.49, 681.98, -1046.30),
+            Vector3.new(-47.50, 684.07, -1063.33), Vector3.new(-32.90, 686.00, -1074.09),
+            Vector3.new(-17.53, 687.59, -1078.57), Vector3.new(-0.72, 688.77, -1076.49),
+            Vector3.new(13.55, 689.13, -1064.21),  Vector3.new(23.43, 689.39, -1044.21),
+            Vector3.new(33.00, 690.92, -1023.98),  Vector3.new(44.31, 691.14, -1006.29),
+            Vector3.new(59.45, 691.80, -993.20),   Vector3.new(76.25, 694.09, -981.45),
+            Vector3.new(96.68, 697.10, -974.30),   Vector3.new(116.51, 698.60, -968.21),
+            Vector3.new(137.10, 698.98, -961.67),  Vector3.new(156.29, 697.23, -951.29),
+            Vector3.new(173.32, 695.05, -938.33),  Vector3.new(183.95, 692.23, -921.77),
+            Vector3.new(192.97, 689.53, -903.52),  Vector3.new(200.06, 688.21, -879.53),
+            Vector3.new(203.04, 686.34, -859.15),  Vector3.new(200.94, 683.58, -840.85),
+            Vector3.new(197.48, 681.28, -820.58),  Vector3.new(194.06, 681.02, -800.62),
+            Vector3.new(190.71, 681.74, -780.99),  Vector3.new(186.87, 684.93, -760.33),
+            Vector3.new(180.77, 691.18, -742.64),  Vector3.new(174.56, 702.01, -727.44),
+            Vector3.new(172.87, 713.89, -714.62),  Vector3.new(175.04, 724.01, -703.54),
+            Vector3.new(180.30, 732.44, -689.90),  Vector3.new(187.55, 738.63, -677.59),
+            Vector3.new(201.96, 742.96, -663.97),  Vector3.new(218.13, 738.72, -650.07),
+            Vector3.new(229.16, 726.99, -637.15),  Vector3.new(232.71, 711.29, -624.60),
+            Vector3.new(227.26, 695.29, -607.90),  Vector3.new(217.18, 685.64, -592.72),
+            Vector3.new(205.49, 681.23, -571.62),  Vector3.new(198.88, 680.89, -549.15),
+            Vector3.new(197.44, 680.99, -533.10),  Vector3.new(197.65, 680.98, -512.25),
+            Vector3.new(197.14, 682.17, -492.58),  Vector3.new(194.64, 685.42, -472.25),
+            Vector3.new(191.54, 688.62, -450.67),  Vector3.new(186.21, 690.50, -430.74),
+            Vector3.new(180.52, 692.76, -411.41),  Vector3.new(177.31, 695.38, -390.86),
+            Vector3.new(176.55, 696.49, -367.12),  Vector3.new(175.83, 698.31, -345.81),
+            Vector3.new(173.35, 700.81, -324.39),  Vector3.new(169.76, 702.28, -302.98),
+            Vector3.new(166.22, 703.01, -281.58),  Vector3.new(162.77, 702.73, -260.78),
+            Vector3.new(159.70, 702.06, -241.29),  Vector3.new(157.52, 701.37, -221.11),
+            Vector3.new(155.25, 699.89, -199.27)
+        },
+        [2] = {
+            Vector3.new(150.20, 702.99, -297.33), Vector3.new(156.25, 702.87, -280.83),
+            Vector3.new(161.96, 703.34, -265.27), Vector3.new(166.07, 704.21, -249.41),
+            Vector3.new(169.19, 705.19, -233.33), Vector3.new(174.99, 706.52, -216.19),
+            Vector3.new(181.25, 707.99, -200.43), Vector3.new(187.32, 709.26, -185.21),
+            Vector3.new(193.99, 709.98, -168.22), Vector3.new(199.80, 709.58, -151.18),
+            Vector3.new(203.61, 708.60, -134.76), Vector3.new(206.88, 707.20, -118.46),
+            Vector3.new(210.21, 706.40, -102.35), Vector3.new(213.52, 706.09, -86.17),
+            Vector3.new(214.61, 705.78, -73.63),  Vector3.new(213.17, 705.10, -56.81),
+            Vector3.new(211.23, 704.68, -40.74),  Vector3.new(207.94, 703.85, -19.76),
+            Vector3.new(201.18, 701.82, -5.13),   Vector3.new(191.35, 700.50, 9.79),
+            Vector3.new(178.33, 699.54, 25.61),   Vector3.new(164.34, 698.34, 33.95),
+            Vector3.new(148.88, 697.11, 39.24),   Vector3.new(133.22, 696.62, 44.28),
+            Vector3.new(116.78, 696.16, 51.19),   Vector3.new(101.84, 695.17, 59.11),
+            Vector3.new(85.80, 693.52, 67.81),    Vector3.new(67.42, 691.23, 76.57),
+            Vector3.new(49.83, 691.42, 78.30),    Vector3.new(32.63, 690.01, 75.49),
+            Vector3.new(16.16, 686.51, 70.37),    Vector3.new(0.14, 681.99, 70.53),
+            Vector3.new(-15.62, 681.65, 74.92),   Vector3.new(-31.68, 683.71, 80.31),
+            Vector3.new(-47.83, 687.66, 84.39),   Vector3.new(-65.05, 686.78, 86.92),
+            Vector3.new(-82.65, 685.45, 87.79),   Vector3.new(-99.35, 684.37, 87.45),
+            Vector3.new(-116.34, 684.68, 83.01),  Vector3.new(-133.22, 683.05, 74.69),
+            Vector3.new(-146.11, 683.01, 64.32),  Vector3.new(-155.69, 683.01, 50.98),
+            Vector3.new(-161.77, 683.02, 33.99),  Vector3.new(-163.25, 683.01, 16.93),
+            Vector3.new(-160.17, 683.01, -1.18),  Vector3.new(-155.03, 683.06, -16.43),
+            Vector3.new(-150.15, 683.24, -36.10), Vector3.new(-149.86, 683.53, -48.86),
+            Vector3.new(-150.80, 683.97, -67.37), Vector3.new(-144.25, 685.25, -86.69),
+            Vector3.new(-137.47, 685.81, -104.97), Vector3.new(-133.88, 686.13, -124.11),
+            Vector3.new(-133.45, 686.30, -139.14), Vector3.new(-142.47, 686.47, -153.07),
+            Vector3.new(-150.88, 686.64, -166.64), Vector3.new(-152.15, 686.80, -178.45),
+            Vector3.new(-151.87, 686.95, -191.47), Vector3.new(-154.73, 687.17, -206.49),
+            Vector3.new(-159.03, 691.88, -222.63), Vector3.new(-162.19, 702.09, -233.66),
+            Vector3.new(-163.86, 712.25, -238.67), Vector3.new(-164.83, 723.64, -240.38),
+            Vector3.new(-164.84, 731.92, -240.38), Vector3.new(-163.90, 746.29, -242.39),
+            Vector3.new(-163.52, 757.05, -247.52), Vector3.new(-163.68, 766.26, -255.52),
+            Vector3.new(-164.30, 772.95, -265.76), Vector3.new(-165.38, 776.67, -279.00),
+            Vector3.new(-166.45, 776.98, -292.20), Vector3.new(-167.38, 776.99, -304.37),
+            Vector3.new(-168.37, 776.99, -317.25), Vector3.new(-169.29, 776.99, -329.21),
+            Vector3.new(-170.40, 777.01, -343.84), Vector3.new(-171.19, 776.97, -355.57),
+            Vector3.new(-172.01, 777.01, -368.62), Vector3.new(-172.47, 776.88, -381.43),
+            Vector3.new(-170.89, 782.35, -400.01), Vector3.new(-168.98, 785.77, -418.31),
+            Vector3.new(-167.50, 787.06, -434.62), Vector3.new(-166.62, 786.03, -450.13),
+            Vector3.new(-166.44, 783.02, -463.48), Vector3.new(-166.92, 778.22, -476.41),
+            Vector3.new(-168.01, 772.23, -488.16), Vector3.new(-171.33, 770.99, -500.38),
+            Vector3.new(-180.91, 771.05, -514.66), Vector3.new(-194.71, 771.02, -525.79),
+            Vector3.new(-206.69, 771.01, -537.34), Vector3.new(-217.69, 773.89, -550.17),
+            Vector3.new(-225.52, 778.90, -559.41), Vector3.new(-232.70, 780.99, -567.91),
+            Vector3.new(-240.35, 780.40, -577.31), Vector3.new(-247.91, 776.08, -587.47),
+            Vector3.new(-254.25, 768.94, -596.77), Vector3.new(-260.43, 764.96, -607.47),
+            Vector3.new(-266.73, 765.05, -622.61), Vector3.new(-271.41, 765.01, -643.10),
+            Vector3.new(-275.59, 764.95, -659.36), Vector3.new(-281.98, 764.99, -674.81),
+            Vector3.new(-287.98, 771.18, -689.08), Vector3.new(-293.46, 775.30, -704.40),
+            Vector3.new(-297.23, 774.56, -715.66), Vector3.new(-300.70, 770.50, -726.26),
+            Vector3.new(-303.86, 763.23, -735.84), Vector3.new(-306.67, 752.88, -744.16),
+            Vector3.new(-309.73, 748.09, -754.08), Vector3.new(-313.06, 744.22, -765.12),
+            Vector3.new(-316.12, 740.73, -775.60), Vector3.new(-318.31, 737.24, -787.80),
+            Vector3.new(-318.35, 734.88, -799.33), Vector3.new(-317.13, 733.29, -812.13),
+            Vector3.new(-313.61, 733.00, -829.37), Vector3.new(-306.86, 733.02, -845.21),
+            Vector3.new(-298.17, 734.09, -858.25), Vector3.new(-286.96, 733.01, -868.49),
+            Vector3.new(-270.90, 732.99, -873.67), Vector3.new(-255.31, 733.01, -867.45),
+            Vector3.new(-245.24, 732.99, -852.00), Vector3.new(-236.67, 732.94, -835.87),
+            Vector3.new(-226.88, 730.77, -818.53), Vector3.new(-217.50, 730.13, -803.03),
+            Vector3.new(-208.56, 731.31, -788.82), Vector3.new(-196.89, 733.12, -772.90),
+            Vector3.new(-182.94, 734.36, -762.90), Vector3.new(-167.45, 734.94, -758.75),
+            Vector3.new(-149.18, 734.59, -758.48), Vector3.new(-132.71, 733.41, -758.59),
+            Vector3.new(-115.33, 733.35, -758.93), Vector3.new(-100.69, 738.02, -761.76),
+            Vector3.new(-89.01, 747.67, -765.08),  Vector3.new(-81.46, 760.83, -767.60),
+            Vector3.new(-78.94, 773.63, -768.90),  Vector3.new(-81.22, 789.82, -769.63),
+            Vector3.new(-87.56, 801.36, -771.61),  Vector3.new(-98.79, 811.69, -774.67),
+            Vector3.new(-112.17, 817.43, -780.53), Vector3.new(-126.42, 819.25, -787.48),
+            Vector3.new(-141.05, 817.26, -793.71), Vector3.new(-154.84, 811.16, -799.39),
+            Vector3.new(-166.49, 800.89, -805.16), Vector3.new(-173.91, 788.31, -810.76),
+            Vector3.new(-176.92, 772.25, -817.15), Vector3.new(-173.20, 756.26, -821.78),
+            Vector3.new(-163.75, 743.28, -826.80), Vector3.new(-150.25, 735.14, -832.70),
+            Vector3.new(-134.05, 733.00, -839.33), Vector3.new(-116.90, 732.44, -846.14),
+            Vector3.new(-96.50, 730.74, -854.61),  Vector3.new(-78.69, 729.07, -865.48),
+            Vector3.new(-65.85, 727.72, -879.60),  Vector3.new(-56.08, 726.92, -894.24),
+            Vector3.new(-48.22, 723.82, -913.78),  Vector3.new(-40.40, 720.87, -930.67),
+            Vector3.new(-29.68, 718.39, -944.33),  Vector3.new(-16.75, 714.28, -954.95),
+            Vector3.new(-1.58, 710.68, -965.37),   Vector3.new(13.33, 710.77, -975.69),
+            Vector3.new(30.51, 710.35, -982.66),   Vector3.new(49.02, 712.31, -984.72),
+            Vector3.new(67.12, 714.72, -980.76),   Vector3.new(82.08, 715.39, -970.12),
+            Vector3.new(89.19, 713.70, -954.44),   Vector3.new(86.90, 709.01, -937.73),
+            Vector3.new(77.58, 708.56, -919.84),   Vector3.new(70.54, 710.12, -902.37),
+            Vector3.new(63.67, 709.03, -884.34),   Vector3.new(57.22, 708.39, -863.31),
+            Vector3.new(54.02, 708.25, -843.12),   Vector3.new(49.72, 708.97, -826.11),
+            Vector3.new(48.47, 709.76, -809.57),   Vector3.new(51.00, 710.46, -793.28),
+            Vector3.new(55.96, 711.41, -773.03),   Vector3.new(61.38, 712.90, -752.39),
+            Vector3.new(67.35, 710.72, -736.82),   Vector3.new(71.13, 708.04, -720.90),
+            Vector3.new(72.78, 705.41, -704.92),   Vector3.new(74.23, 704.22, -691.30),
+            Vector3.new(75.48, 704.29, -675.17),   Vector3.new(74.90, 705.19, -658.42),
+            Vector3.new(72.83, 706.56, -637.81),   Vector3.new(68.19, 708.36, -620.63),
+            Vector3.new(60.83, 708.16, -599.91),   Vector3.new(56.65, 706.67, -582.42),
+            Vector3.new(58.65, 705.32, -565.72),   Vector3.new(63.39, 703.79, -546.12),
+            Vector3.new(67.69, 704.49, -529.36),   Vector3.new(72.08, 705.99, -511.70),
+            Vector3.new(76.51, 707.75, -493.59),   Vector3.new(80.50, 707.93, -475.78),
+            Vector3.new(84.71, 707.47, -457.18),   Vector3.new(89.94, 708.06, -437.96),
+            Vector3.new(97.06, 708.37, -423.98),   Vector3.new(106.47, 708.47, -410.88),
+            Vector3.new(118.17, 707.55, -394.77),  Vector3.new(128.96, 705.27, -379.29),
+            Vector3.new(137.37, 703.76, -358.33),  Vector3.new(144.83, 703.00, -336.27),
+            Vector3.new(153.63, 703.01, -311.93),  Vector3.new(162.98, 702.98, -286.08),
+            Vector3.new(168.63, 703.18, -270.51)
+        },
+        [3] = {
+            Vector3.new(154.43, 703.03, -272.66), Vector3.new(151.63, 703.31, -287.45),
+            Vector3.new(150.93, 704.72, -303.07), Vector3.new(150.29, 706.59, -322.22),
+            Vector3.new(152.04, 706.03, -342.44), Vector3.new(157.70, 703.75, -358.92),
+            Vector3.new(163.90, 701.75, -375.79), Vector3.new(170.96, 700.11, -392.67),
+            Vector3.new(182.28, 698.21, -410.40), Vector3.new(196.19, 696.26, -423.04),
+            Vector3.new(213.98, 694.89, -433.94), Vector3.new(233.00, 692.66, -441.40),
+            Vector3.new(253.89, 687.94, -449.33), Vector3.new(274.08, 682.23, -456.48),
+            Vector3.new(295.76, 675.50, -461.73), Vector3.new(317.69, 668.52, -464.87),
+            Vector3.new(337.95, 662.28, -467.64), Vector3.new(358.18, 656.43, -472.69),
+            Vector3.new(377.75, 651.97, -475.43), Vector3.new(397.40, 648.60, -482.30),
+            Vector3.new(415.21, 647.09, -492.66), Vector3.new(431.19, 647.22, -500.10),
+            Vector3.new(447.09, 647.64, -506.18), Vector3.new(464.26, 647.44, -512.85),
+            Vector3.new(481.80, 648.18, -519.62), Vector3.new(498.27, 649.14, -525.91),
+            Vector3.new(517.85, 650.36, -533.17), Vector3.new(537.45, 650.55, -539.31),
+            Vector3.new(555.52, 650.52, -543.87), Vector3.new(570.22, 650.68, -550.35),
+            Vector3.new(580.34, 650.78, -553.71), Vector3.new(596.29, 650.37, -551.53),
+            Vector3.new(618.17, 650.39, -552.51), Vector3.new(637.65, 650.06, -551.63),
+            Vector3.new(659.17, 649.55, -549.96), Vector3.new(680.79, 649.45, -550.74),
+            Vector3.new(700.70, 649.30, -553.04), Vector3.new(719.62, 649.94, -559.37),
+            Vector3.new(732.94, 647.94, -567.81), Vector3.new(745.06, 648.27, -581.94),
+            Vector3.new(754.28, 647.38, -595.57), Vector3.new(761.34, 647.68, -610.21),
+            Vector3.new(767.42, 649.91, -626.53), Vector3.new(770.74, 650.42, -643.17),
+            Vector3.new(771.22, 652.63, -661.46), Vector3.new(768.30, 656.59, -681.29),
+            Vector3.new(763.57, 658.04, -697.78), Vector3.new(759.80, 657.22, -721.16),
+            Vector3.new(764.06, 656.29, -736.17), Vector3.new(758.88, 655.56, -750.90),
+            Vector3.new(753.07, 655.15, -765.69), Vector3.new(749.39, 655.06, -781.39),
+            Vector3.new(743.51, 655.54, -796.75), Vector3.new(736.63, 656.47, -815.39),
+            Vector3.new(729.80, 656.26, -829.42), Vector3.new(721.83, 656.36, -844.58),
+            Vector3.new(709.28, 656.95, -859.62), Vector3.new(692.29, 656.98, -868.55),
+            Vector3.new(673.38, 657.20, -873.74), Vector3.new(654.83, 657.60, -875.14),
+            Vector3.new(634.71, 658.77, -874.95), Vector3.new(617.27, 660.02, -869.53),
+            Vector3.new(602.31, 661.50, -861.57), Vector3.new(589.62, 663.02, -851.10),
+            Vector3.new(579.92, 663.98, -836.22), Vector3.new(573.78, 664.04, -818.54),
+            Vector3.new(565.85, 664.77, -801.88), Vector3.new(553.26, 666.88, -788.48),
+            Vector3.new(539.53, 666.13, -778.43), Vector3.new(523.50, 666.52, -772.99),
+            Vector3.new(504.82, 666.99, -775.45), Vector3.new(489.06, 665.55, -781.58),
+            Vector3.new(475.17, 664.53, -794.92), Vector3.new(464.96, 663.74, -809.66),
+            Vector3.new(454.71, 663.99, -829.70), Vector3.new(445.01, 666.37, -845.77),
+            Vector3.new(435.52, 667.45, -862.23), Vector3.new(425.95, 668.13, -883.58),
+            Vector3.new(420.05, 668.88, -905.53), Vector3.new(414.53, 669.56, -927.13),
+            Vector3.new(406.98, 669.92, -943.10), Vector3.new(396.50, 669.90, -956.66),
+            Vector3.new(383.30, 669.67, -966.47), Vector3.new(368.98, 671.43, -972.00),
+            Vector3.new(359.16, 671.42, -981.47), Vector3.new(352.98, 673.29, -990.22),
+            Vector3.new(342.56, 672.71, -985.88), Vector3.new(332.30, 672.15, -974.10),
+            Vector3.new(322.06, 672.15, -960.78), Vector3.new(310.51, 672.97, -942.19),
+            Vector3.new(306.23, 672.87, -924.52), Vector3.new(303.11, 671.86, -904.24),
+            Vector3.new(298.72, 674.01, -887.59), Vector3.new(290.57, 678.25, -872.05),
+            Vector3.new(279.95, 682.81, -860.13), Vector3.new(266.88, 688.04, -849.90),
+            Vector3.new(251.59, 693.10, -843.24), Vector3.new(237.86, 696.85, -842.16),
+            Vector3.new(222.42, 700.65, -844.49), Vector3.new(206.95, 704.26, -849.62),
+            Vector3.new(190.89, 707.62, -859.35), Vector3.new(179.71, 709.61, -873.42),
+            Vector3.new(175.87, 710.07, -885.84), Vector3.new(174.50, 710.11, -899.02),
+            Vector3.new(173.92, 711.34, -911.55), Vector3.new(175.42, 714.91, -929.21),
+            Vector3.new(182.97, 718.02, -942.91), Vector3.new(196.80, 720.92, -953.24),
+            Vector3.new(210.50, 724.35, -959.34), Vector3.new(225.89, 728.59, -962.83),
+            Vector3.new(241.18, 733.27, -963.77), Vector3.new(255.53, 737.23, -959.73),
+            Vector3.new(268.01, 740.42, -949.72), Vector3.new(278.83, 743.72, -936.94),
+            Vector3.new(288.03, 746.65, -922.59), Vector3.new(298.70, 748.34, -902.47),
+            Vector3.new(309.40, 749.73, -888.47), Vector3.new(322.04, 750.87, -878.85),
+            Vector3.new(335.45, 752.23, -870.86), Vector3.new(348.49, 753.42, -861.21),
+            Vector3.new(359.05, 752.97, -848.29), Vector3.new(368.49, 752.08, -834.88),
+            Vector3.new(378.54, 751.77, -820.50), Vector3.new(387.25, 752.08, -807.89),
+            Vector3.new(398.25, 753.06, -787.99), Vector3.new(402.27, 753.70, -775.03),
+            Vector3.new(401.50, 754.06, -758.03), Vector3.new(392.90, 753.41, -744.43),
+            Vector3.new(378.48, 752.34, -734.28), Vector3.new(364.72, 752.75, -726.63),
+            Vector3.new(352.92, 753.77, -712.58), Vector3.new(348.71, 753.40, -693.13),
+            Vector3.new(349.42, 752.68, -669.06), Vector3.new(348.57, 752.68, -652.37),
+            Vector3.new(349.31, 753.00, -636.34), Vector3.new(352.95, 753.01, -619.48),
+            Vector3.new(357.04, 753.01, -603.52), Vector3.new(361.60, 753.04, -585.48),
+            Vector3.new(364.70, 753.30, -565.56), Vector3.new(363.52, 753.34, -548.19),
+            Vector3.new(358.25, 751.12, -529.98), Vector3.new(350.81, 744.05, -516.20),
+            Vector3.new(346.08, 734.51, -507.05), Vector3.new(344.74, 724.46, -499.01),
+            Vector3.new(346.44, 714.87, -491.51), Vector3.new(351.43, 704.39, -484.42),
+            Vector3.new(359.39, 695.71, -479.79), Vector3.new(372.01, 688.57, -476.11),
+            Vector3.new(385.28, 686.92, -474.03), Vector3.new(398.52, 689.99, -472.51),
+            Vector3.new(413.48, 701.86, -470.63), Vector3.new(419.17, 713.59, -468.86),
+            Vector3.new(420.79, 725.79, -465.03), Vector3.new(418.83, 737.15, -457.73),
+            Vector3.new(415.28, 744.04, -448.14), Vector3.new(411.58, 748.74, -434.86),
+            Vector3.new(408.66, 751.08, -424.33), Vector3.new(405.28, 752.76, -411.70),
+            Vector3.new(401.94, 753.55, -399.48), Vector3.new(400.02, 753.60, -387.73),
+            Vector3.new(399.63, 753.30, -375.74), Vector3.new(401.47, 753.07, -363.84),
+            Vector3.new(404.63, 753.01, -352.13), Vector3.new(407.94, 753.01, -340.48),
+            Vector3.new(411.27, 753.01, -328.79), Vector3.new(414.59, 753.01, -317.12),
+            Vector3.new(417.88, 753.01, -305.50), Vector3.new(420.62, 752.93, -293.25),
+            Vector3.new(422.67, 753.01, -281.03), Vector3.new(425.02, 752.97, -266.38),
+            Vector3.new(427.00, 753.01, -254.42), Vector3.new(429.74, 753.01, -242.91),
+            Vector3.new(432.90, 753.01, -231.61), Vector3.new(436.24, 755.82, -219.92),
+            Vector3.new(439.70, 761.04, -207.72), Vector3.new(443.16, 763.43, -195.42),
+            Vector3.new(446.54, 762.59, -183.52), Vector3.new(449.78, 758.45, -172.34),
+            Vector3.new(452.88, 750.70, -161.96), Vector3.new(455.27, 740.66, -153.54),
+            Vector3.new(457.37, 734.25, -143.50), Vector3.new(457.96, 730.91, -130.16),
+            Vector3.new(456.69, 727.22, -117.82), Vector3.new(453.45, 722.64, -104.27),
+            Vector3.new(449.77, 719.25, -93.74),  Vector3.new(444.09, 715.38, -82.18),
+            Vector3.new(437.69, 712.20, -71.87),  Vector3.new(429.61, 709.34, -61.89),
+            Vector3.new(420.08, 707.00, -54.17),  Vector3.new(408.32, 704.98, -48.49),
+            Vector3.new(395.44, 703.76, -44.05),  Vector3.new(383.92, 703.21, -40.78),
+            Vector3.new(371.26, 703.17, -37.76),  Vector3.new(359.33, 703.08, -37.20),
+            Vector3.new(345.68, 702.63, -40.01),  Vector3.new(333.62, 702.41, -44.06),
+            Vector3.new(322.30, 702.34, -49.27),  Vector3.new(312.03, 702.22, -58.18),
+            Vector3.new(302.11, 702.44, -66.50),  Vector3.new(292.38, 702.20, -75.61),
+            Vector3.new(283.49, 701.62, -84.35),  Vector3.new(274.00, 700.95, -93.75),
+            Vector3.new(264.43, 700.17, -103.24), Vector3.new(256.03, 699.62, -111.99),
+            Vector3.new(245.95, 698.90, -123.08), Vector3.new(235.31, 698.44, -133.73),
+            Vector3.new(225.84, 698.13, -143.64), Vector3.new(217.81, 697.99, -152.63),
+            Vector3.new(209.25, 698.84, -162.43), Vector3.new(200.35, 701.25, -172.68),
+            Vector3.new(191.07, 702.79, -184.77), Vector3.new(184.45, 702.51, -196.56),
+            Vector3.new(180.33, 702.46, -207.84), Vector3.new(176.87, 702.77, -219.56),
+            Vector3.new(173.03, 702.99, -234.40), Vector3.new(171.21, 703.01, -245.91),
+            Vector3.new(169.48, 703.01, -259.01), Vector3.new(167.71, 702.97, -272.98),
+            Vector3.new(165.91, 703.16, -287.35), Vector3.new(164.31, 704.06, -300.16),
+            Vector3.new(163.18, 705.09, -309.17)
+        }
+    }
+
+    local session = {
+        currentMap = 1,
+        currentIndex = 1,
+        lapCount = 1,
+        speed = 1000,
+        mapCooldownUntil = 0,
+        lastProgressIndex = 1,
+        lastProgressTime = tick(),
+    }
+
+    local function getActiveEntity()
+        local character = player.Character
+        local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+        local rootPart = character and character:FindFirstChild("HumanoidRootPart")
+
+        if humanoid and humanoid.SeatPart then
+            local seat = humanoid.SeatPart
+            local vehicleModel = seat:FindFirstAncestorWhichIsA("Model")
+            if vehicleModel then
+                return vehicleModel, (vehicleModel.PrimaryPart or seat)
+            end
+            return seat, seat
+        end
+        return character, rootPart
+    end
+
+    local function applyNoClip(model)
+        if not model then return end
+        for _, part in ipairs(model:GetDescendants()) do
+            if part:IsA("BasePart") and part.CanCollide then
+                part.CanCollide = false
+            end
+        end
+    end
+
+    -- ==========================================================
+    -- 2. DÒ MAP VÀ CHUYỂN MAP LIÊN TỤC
+    -- ==========================================================
+    task.spawn(function()
+        local lastWorldCheck = 0
+        local lastRoadInstance = nil
+        local lastChildCount = -1
+
+        local function triggerNextMap(targetMap)
+            if tick() - lastWorldCheck < 4.0 then return end
+            lastWorldCheck = tick()
+
+            if targetMap then
+                session.currentMap = targetMap
+            else
+                session.currentMap = (session.currentMap % 3) + 1
+            end
+
+            session.currentIndex = 1
+            session.lapCount = 1
+            session.mapCooldownUntil = tick() + 10
+            session.lastProgressIndex = 1
+            session.lastProgressTime = tick()
+            log(string.format("Chuyển sang MAP %d -> Chờ 10s nạp asset!", session.currentMap))
+        end
+
+        while ctx.alive do
+            task.wait(0.3)
+            if state.AutoHorseRacing == true then
+                local gpWorld = Workspace:FindFirstChild("GrandPrixWorld")
+                if gpWorld then
+                    local road = gpWorld:FindFirstChild("Road")
+                    local scenery = gpWorld:FindFirstChild("Scenery")
+
+                    if road and road ~= lastRoadInstance then
+                        if lastRoadInstance ~= nil then
+                            triggerNextMap()
+                        end
+                        lastRoadInstance = road
+                    end
+
+                    if road then
+                        local currentCount = #road:GetChildren() + (scenery and #scenery:GetChildren() or 0)
+                        if lastChildCount ~= -1 and math.abs(currentCount - lastChildCount) >= 8 then
+                            triggerNextMap()
+                        end
+                        lastChildCount = currentCount
+                    end
+                else
+                    lastRoadInstance = nil
+                    lastChildCount = -1
+                end
+            end
+        end
+    end)
+
+    -- ==========================================================
+    -- 3. VÒNG LẶP AUTOPILOT (ĐUA NGỰA VƯỢT ĐỊA HÌNH)
+    -- ==========================================================
+    task.spawn(function()
+        log("Lõi Auto Horse Racing sẵn sàng...")
+
+        while ctx.alive do
+            if state.AutoHorseRacing == true then
+                -- 1. Chờ nạp map nếu vừa đổi
+                if tick() < session.mapCooldownUntil then
+                    local entity, root = getActiveEntity()
+                    if root and root.Parent then
+                        root.AssemblyLinearVelocity = Vector3.zero
+                        root.AssemblyAngularVelocity = Vector3.zero
+                    end
+                    RunService.Heartbeat:Wait()
+                    continue
+                end
+
+                local track = RecordedTracks[session.currentMap]
+                if track and #track > 2 then
+                    local entity, root = getActiveEntity()
+                    if root and root.Parent then
+                        applyNoClip(entity)
+                        root.AssemblyLinearVelocity = Vector3.zero
+                        root.AssemblyAngularVelocity = Vector3.zero
+
+                        -- 2. Watchdog: Nếu kẹt 8s tại 1 waypoint thì reset về Waypoint 1
+                        if session.currentIndex == session.lastProgressIndex then
+                            if tick() - session.lastProgressTime >= 8.0 then
+                                log(string.format("Kẹt tại Waypoint %d quá 8s! Reset về điểm 1...", session.currentIndex))
+                                session.currentIndex = 1
+                                session.lastProgressIndex = 1
+                                session.lastProgressTime = tick()
+
+                                local p1 = track[1]
+                                local p2 = track[2] or (p1 + Vector3.new(0, 0, 1))
+                                local resetCF = CFrame.lookAt(p1, p2)
+                                if entity:IsA("Model") then
+                                    entity:PivotTo(resetCF)
+                                else
+                                    root.CFrame = resetCF
+                                end
+                                task.wait(0.1)
+                            end
+                        else
+                            session.lastProgressIndex = session.currentIndex
+                            session.lastProgressTime = tick()
+                        end
+
+                        -- 3. Di chuyển CFrame mượt mà
+                        local dt = RunService.Heartbeat:Wait()
+                        local remainingDist = session.speed * dt
+                        local currentPos = root.Position
+                        local forwardDir = root.CFrame.LookVector
+
+                        while remainingDist > 0 and state.AutoHorseRacing == true and (tick() >= session.mapCooldownUntil) do
+                            local targetPt = track[session.currentIndex]
+                            local delta = targetPt - currentPos
+                            local dist = delta.Magnitude
+
+                            if dist > 0.01 then
+                                forwardDir = delta.Unit
+                            end
+
+                            if dist <= remainingDist then
+                                remainingDist = remainingDist - dist
+                                currentPos = targetPt
+                                session.currentIndex = session.currentIndex + 1
+
+                                if session.currentIndex > #track then
+                                    session.currentIndex = 1
+                                    session.lapCount = session.lapCount + 1
+                                    log(string.format("Hoàn thành Map %d Vòng %d!", session.currentMap, session.lapCount - 1))
+                                end
+                            else
+                                currentPos = currentPos + (delta.Unit * remainingDist)
+                                remainingDist = 0
+                            end
+                        end
+
+                        local finalCF = CFrame.lookAt(currentPos, currentPos + forwardDir)
+                        if entity:IsA("Model") then
+                            entity:PivotTo(finalCF)
+                        else
+                            root.CFrame = finalCF
+                        end
+                    else
+                        task.wait(0.2)
+                    end
+                else
+                    task.wait(0.5)
+                end
+            else
+                task.wait(0.3)
+            end
+        end
+        log("Worker AutoHorseRacing đã dừng an toàn do ctx.alive = false.")
+    end)
+
+    if type(ui.SetToggleHandler) == "function" then
+        ui:SetToggleHandler("AutoHorseRacing", function(enabled)
+            log("AutoHorseRacing = " .. tostring(enabled))
+            if enabled then
+                session.currentIndex = 1
+                session.lastProgressTime = tick()
+                session.mapCooldownUntil = tick() + 2
+            end
+        end)
+    end
+end
+
+return AutoHorseRacing
+end)()
+-- END MODULE AutoHorseRacing
+
+-- BEGIN MODULE AutoTrialOfTheSaint
+Modules.AutoTrialOfTheSaint = (function()
+--[[
+    LotusHub / modules/Gamemode/Trail Of The Saint/Auto Trial Of The Saint.lua
+    Chức năng: Auto Trial Of The Saint (Chế độ Thử thách Thánh nhân).
+    Bao gồm bảng chọn giữa 2 ending:
+      1. True ending
+      2. Secret ending (Secret endinh)
+    Hiện tại khởi tạo giao diện và state, sẵn sàng nạp logic khi có raw.
+]]
+local AutoTrialOfTheSaint = {}
+
+function AutoTrialOfTheSaint.Init(ctx, ui)
+    local state = ctx.state
+
+    if state.AutoTrialOfTheSaint == nil then
+        state.AutoTrialOfTheSaint = false
+    end
+
+    if type(state.TrialEndings) ~= "table" then
+        state.TrialEndings = {
+            ["True ending"] = true,
+            ["Secret ending"] = false,
+        }
+    end
+
+    local function log(message)
+        print("[LotusHub TrialOfTheSaint] " .. message)
+    end
+
+    if type(ui.SetToggleHandler) == "function" then
+        ui:SetToggleHandler("AutoTrialOfTheSaint", function(enabled)
+            log("AutoTrialOfTheSaint = " .. tostring(enabled))
+        end)
+    end
+end
+
+return AutoTrialOfTheSaint
+end)()
+-- END MODULE AutoTrialOfTheSaint
+
 local env = ((type(getgenv) == "function") and getgenv()) or _G
 local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 if not player then error("[LotusHub] LocalPlayer chưa sẵn sàng") end
-local Menu, Gameplay, Match, Replay = Modules.Menu, Modules.Gameplay, Modules.Match, Modules.Replay
+
+local Menu = Modules.Menu
+local ModifierConfig = Modules.ModifierConfig
+local Gameplay = Modules.Gameplay
+local Modifiers = Modules.Modifiers
+local Gamemode = Modules.Gamemode
+local Match = Modules.Match
+local Replay = Modules.Replay
+local BoostPerformance = Modules.BoostPerformance
+local AutoPick = Modules.AutoPick
+local RestartAfterWaves = Modules.RestartAfterWaves
+local RestartIfMissingModifier = Modules.RestartIfMissingModifier
+local AutoJoinGrandPrix = Modules.AutoJoinGrandPrix
+local AutoHorseRacing = Modules.AutoHorseRacing
+local AutoTrialOfTheSaint = Modules.AutoTrialOfTheSaint
 
 -- [START] Chỉ khi import xong mới dọn phiên cũ, tránh trùng worker/GUI.
 if type(env.LotusHubUI) == "table" and type(env.LotusHubUI.Destroy) == "function" then
@@ -2009,7 +4507,8 @@ local ctx = {
     playerGui = playerGui,
     state = {},
     expanded = {},
-    knownModifiers = {}, -- MISSING: không tự bịa modifier.
+    knownModifiers = {},
+    ModifierConfig = ModifierConfig,
     connections = {},
     alive = true,
     screen = nil,
@@ -2024,7 +4523,7 @@ end
 
 function ctx:Destroy()
     if not self.alive then return end
-    self.alive = false -- Ngăn worker Match thực hiện thao tác mới.
+    self.alive = false
     for _, connection in ipairs(self.connections) do
         pcall(function() connection:Disconnect() end)
     end
@@ -2036,14 +4535,24 @@ function ctx:Destroy()
     if self.env.LotusHubUI == self.ui then self.env.LotusHubUI = nil end
 end
 
--- [GẮN MODULE] Lần lượt tạo UI, đăng ký Gameplay, nối Match vào toggle.
+-- [GẮN MODULE] Lần lượt tạo UI, đăng ký Gameplay, Modifiers & Gamemode, nối tất cả worker.
 local ok, err = pcall(function()
     local ui = Menu.Create(ctx)
     ctx.ui = ui
+    ModifierConfig.Init(ctx, ui)
     Gameplay.Init(ctx, ui)
+    Modifiers.Init(ctx, ui)
+    Gamemode.Init(ctx, ui)
     Match.Init(ctx, ui)
     Replay.Init(ctx, ui)
-    env.LotusHubUI = ui -- API tương thích bản cũ.
+    BoostPerformance.Init(ctx, ui)
+    AutoPick.Init(ctx, ui)
+    RestartAfterWaves.Init(ctx, ui)
+    RestartIfMissingModifier.Init(ctx, ui)
+    AutoJoinGrandPrix.Init(ctx, ui)
+    AutoHorseRacing.Init(ctx, ui)
+    AutoTrialOfTheSaint.Init(ctx, ui)
+    env.LotusHubUI = ui
     ui:ShowTab("Gameplay")
 end)
 
@@ -2052,4 +4561,4 @@ if not ok then
     error("[LotusHub] Khởi động thất bại: " .. tostring(err))
 end
 
-print("[LotusHub] Đã nạp Menu + Gameplay + Match V3 + Replay (Khôi phục Auto Replay -> Lobby Raw).")
+print("[LotusHub Standalone] Đã nạp thành công: Menu + Gameplay + Modifiers + Gamemode (Grand Prix & Trail Of The Saint).")
