@@ -42,6 +42,8 @@ function Menu.Create(ctx)
         panel = Color3.fromRGB(11, 13, 17),
         panelBorder = Color3.fromRGB(100, 105, 111),
         row = Color3.fromRGB(56, 58, 63),
+        subRow = Color3.fromRGB(40, 42, 47),
+        subRowBorder = Color3.fromRGB(70, 75, 84),
         rowHover = Color3.fromRGB(76, 79, 85),
         active = Color3.fromRGB(105, 111, 117),
         silver = Color3.fromRGB(225, 228, 232),
@@ -101,14 +103,44 @@ function Menu.Create(ctx)
         return new("TextLabel", parent, base)
     end
 
-    -- [H] CỬA SỔ CHÍNH
-    local screen = new("ScreenGui", playerGui, {
+    -- [H] CỬA SỔ CHÍNH (Áp dụng kỹ thuật Infinite Yield: DisplayOrder tối đa, syn_protect_gui & gethui)
+    local targetGui = nil
+    local useSynProtect = false
+    if type(gethui) == "function" then
+        pcall(function()
+            local h = gethui()
+            if h then targetGui = h end
+        end)
+    end
+    if not targetGui then
+        pcall(function()
+            local cg = game:GetService("CoreGui")
+            if cg then
+                targetGui = cg
+                if type(syn_protect_gui) == "function" or (syn and type(syn.protect_gui) == "function") then
+                    useSynProtect = true
+                end
+            end
+        end)
+    end
+    if not targetGui then
+        targetGui = playerGui
+    end
+
+    local screen = new("ScreenGui", nil, {
         Name = "LotusHub_Gameplay_UI_Demo",
         IgnoreGuiInset = true,
         ResetOnSpawn = false,
-        DisplayOrder = 600,
+        DisplayOrder = 2147483647,
         ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
     })
+
+    if useSynProtect then
+        local protect = (type(syn_protect_gui) == "function" and syn_protect_gui)
+            or (syn and syn.protect_gui)
+        pcall(protect, screen)
+    end
+    screen.Parent = targetGui
 
     -- Khung cửa sổ chính 940x590, vị trí trung tâm màn hình
     local main = corner(new("Frame", screen, {
@@ -392,80 +424,101 @@ function Menu.Create(ctx)
 
     -- [L] CÁC THÀNH PHẦN GIAO DIỆN CHUẨN (UI COMPONENTS)
     local function itemFrame(parent, height)
-        return corner(new("Frame", parent, {
-            Size = UDim2.new(1, 0, 0, height or 49),
-            BackgroundColor3 = C.row,
-            BackgroundTransparency = 0.26,
+        local frame = corner(new("Frame", parent, {
+            LayoutOrder = #parent:GetChildren(),
+            Size = UDim2.new(1, 0, 0, height or 44),
+            BackgroundColor3 = C.subRow,
+            BackgroundTransparency = 0.32,
             BorderSizePixel = 0,
             Active = true,
             ClipsDescendants = false,
-        }), 8)
+        }), 6)
+        stroke(frame, 0.45)
+        return frame
     end
 
     -- [M] CÔNG TẮC ON/OFF HOÀN TOÀN TĨNH (KHÔNG DÙNG TWEEN)
     -- OFF: nền C.track (tối), núm trắng nằm bên TRÁI tại (3, 3), state = false
-    -- ON:  nền C.on (sáng), núm trắng nằm bên PHẢI tại (41, 3), state = true
+    -- ON:  nền C.on (sáng), núm trắng nằm bên PHẢI tại (39, 3), state = true
     -- Vị trí và màu sắc cập nhật tức thời bằng gán thuộc tính trực tiếp khi click
+    -- CHỈ kích hoạt khi bấm trực tiếp vào cần gạt (track), KHÔNG kích hoạt khi click vào ô hàng (row)
     local function toggleItem(parent, text, readValue, saveValue)
-        local row = itemFrame(parent, 49)
+        local row = itemFrame(parent, 44)
+
         label(row, text, {
-            Position = UDim2.fromOffset(17, 0),
-            Size = UDim2.new(1, -112, 1, 0),
-            TextSize = 16,
+            Position = UDim2.fromOffset(14, 0),
+            Size = UDim2.new(1, -96, 1, 0),
+            Font = Enum.Font.GothamMedium,
+            TextSize = 14,
+            TextColor3 = C.silver,
+            ZIndex = 2,
         })
 
         local track = corner(new("TextButton", row, {
             Name = "ToggleTrack",
             AnchorPoint = Vector2.new(1, 0.5),
-            Position = UDim2.new(1, -18, 0.5, 0),
-            Size = UDim2.fromOffset(67, 29),
+            Position = UDim2.new(1, -14, 0.5, 0),
+            Size = UDim2.fromOffset(62, 26),
             BackgroundColor3 = C.track,
             BorderSizePixel = 0,
             Text = "",
             AutoButtonColor = false,
             Active = true,
             Selectable = false,
-        }), 9)
+            ZIndex = 3,
+        }), 8)
         stroke(track, 0.33)
 
         local knob = corner(new("Frame", track, {
             Name = "ToggleKnob",
-            Size = UDim2.fromOffset(23, 23),
+            Size = UDim2.fromOffset(20, 20),
             Position = UDim2.fromOffset(3, 3),
             BackgroundColor3 = C.silver,
             BorderSizePixel = 0,
             Active = false,
-        }), 7)
+            ZIndex = 4,
+        }), 6)
 
         local function redraw()
             local value = (readValue() == true)
             track.BackgroundColor3 = value and C.on or C.track
-            knob.Position = value and UDim2.fromOffset(41, 3) or UDim2.fromOffset(3, 3)
+            knob.Position = value and UDim2.fromOffset(39, 3) or UDim2.fromOffset(3, 3)
             knob.BackgroundColor3 = value and C.white or C.silver
         end
 
         redraw()
 
-        track.MouseButton1Click:Connect(function()
+        local function triggerToggle()
             local current = (readValue() == true)
             saveValue(not current)
             redraw()
-        end)
+        end
+
+        track.MouseButton1Click:Connect(triggerToggle)
 
         return row
     end
 
     local toggleHandlers = {}
 
-    local function stateToggle(parent, text, key)
+    local function stateToggle(parent, text, key, onChange)
         return toggleItem(parent, text, function()
             return state[key]
         end, function(value)
             state[key] = value
-            if type(toggleHandlers[key]) == "function" then
-                toggleHandlers[key](value)
+            if type(onChange) == "function" then
+                pcall(onChange, value)
+            end
+            local handler = toggleHandlers[key]
+            if type(handler) == "table" then
+                for _, h in ipairs(handler) do pcall(h, value) end
+            elseif type(handler) == "function" then
+                pcall(handler, value)
             else
                 print("[LotusHub UI] " .. key .. " = " .. tostring(value) .. " (chỉ UI)")
+            end
+            if type(ctx.SaveConfig) == "function" then
+                pcall(ctx.SaveConfig)
             end
         end)
     end
@@ -505,10 +558,11 @@ function Menu.Create(ctx)
             TextSize = 19,
         })
 
-        local arrow = label(button, expanded[key] and "⌄" or "›", {
+        local arrow = label(button, expanded[key] and "v" or "›", {
             Position = UDim2.new(1, -48, 0, 0),
             Size = UDim2.fromOffset(35, 48),
-            TextSize = 28,
+            TextSize = 18,
+            Font = Enum.Font.GothamBold,
             TextXAlignment = Enum.TextXAlignment.Center,
         })
 
@@ -521,14 +575,19 @@ function Menu.Create(ctx)
             Visible = expanded[key] == true,
         })
         local contentsLayout = vertical(contents, 6)
-        contentsLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
-        new("UIPadding", contents, { PaddingTop = UDim.new(0, 2) })
+        contentsLayout.HorizontalAlignment = Enum.HorizontalAlignment.Right
+        new("UIPadding", contents, {
+            PaddingTop = UDim.new(0, 4),
+            PaddingBottom = UDim.new(0, 4),
+            PaddingLeft = UDim.new(0, 18),
+            PaddingRight = UDim.new(0, 2),
+        })
 
         button.MouseButton1Click:Connect(function()
             local isOpen = not (expanded[key] == true)
             expanded[key] = isOpen
             contents.Visible = isOpen
-            arrow.Text = isOpen and "⌄" or "›"
+            arrow.Text = isOpen and "v" or "›"
         end)
 
         return contents
@@ -635,6 +694,9 @@ function Menu.Create(ctx)
                 or (input.UserInputType == Enum.UserInputType.Touch and input == touchInput) then
                 draggingSlider = false
                 touchInput = nil
+                if type(ctx.SaveConfig) == "function" then
+                    pcall(ctx.SaveConfig)
+                end
             end
         end)
 
@@ -1038,7 +1100,13 @@ function Menu.Create(ctx)
 
     function controller:SetToggleHandler(key, fn)
         assert(type(key) == "string" and type(fn) == "function")
-        toggleHandlers[key] = fn
+        if not toggleHandlers[key] then
+            toggleHandlers[key] = fn
+        elseif type(toggleHandlers[key]) == "function" then
+            toggleHandlers[key] = { toggleHandlers[key], fn }
+        elseif type(toggleHandlers[key]) == "table" then
+            table.insert(toggleHandlers[key], fn)
+        end
     end
 
     function controller:GetState()
