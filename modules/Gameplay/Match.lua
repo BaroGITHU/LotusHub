@@ -16,6 +16,10 @@ function Match.Init(ctx, ui)
     local state = ctx.state
     local screen = ctx.screen
 
+    -- BẢO VỆ TUYỆT ĐỐI: Mặc định luôn là false khi vào bất kỳ Stage hay Lobby nào (chống tự động bắt đầu game)
+    state.AutoStartgame = false
+    state.AutoActiveAutoPlay = false
+
     local function connect(signal, callback)
         return ctx:Connect(signal, callback)
     end
@@ -258,8 +262,8 @@ function Match.Init(ctx, ui)
                 stage.titleSeen = true
             end
 
-            -- AUTO STARTGAME: CHỈ DÙNG START REMOTE, KHÔNG PROBE AUTO PLAY.
-            if state.AutoStartgame and not stage.started then
+            -- AUTO STARTGAME: CHỈ KHI NGƯỜI DÙNG THỰC SỰ BẬT (== true), KHÔNG TỰ ĐỘNG BẬT
+            if state.AutoStartgame == true and not stage.started then
                 if not hasTitle then
                     if stage.titleSeen then
                         matchLogOnce("start", "TẠM DỪNG Start: Match Start đã biến mất; chưa xem là xác nhận bắt đầu")

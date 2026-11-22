@@ -225,6 +225,7 @@ function Modifiers.Init(ctx, ui)
                         if m.Priority > highest then highest = m.Priority end
                     end
                     state.ModifierPriority[mod.Name] = highest + 5
+                    if type(ctx.SaveConfig) == "function" then pcall(ctx.SaveConfig) end
                     task.defer(renderModifierPriorityList)
                 end)
 
@@ -247,6 +248,7 @@ function Modifiers.Init(ctx, ui)
                     local num = tonumber(prioBox.Text)
                     if num and num >= 0 and num <= 99999 then
                         state.ModifierPriority[mod.Name] = math.floor(num)
+                        if type(ctx.SaveConfig) == "function" then pcall(ctx.SaveConfig) end
                         task.defer(renderModifierPriorityList)
                     else
                         prioBox.Text = tostring(mod.Priority)
@@ -271,6 +273,7 @@ function Modifiers.Init(ctx, ui)
 
                 upBtn.Activated:Connect(function()
                     state.ModifierPriority[mod.Name] = (mod.Priority or 50) + 5
+                    if type(ctx.SaveConfig) == "function" then pcall(ctx.SaveConfig) end
                     task.defer(renderModifierPriorityList)
                 end)
 
@@ -293,6 +296,7 @@ function Modifiers.Init(ctx, ui)
                 downBtn.Activated:Connect(function()
                     local current = mod.Priority or 50
                     state.ModifierPriority[mod.Name] = math.max(0, current - 5)
+                    if type(ctx.SaveConfig) == "function" then pcall(ctx.SaveConfig) end
                     task.defer(renderModifierPriorityList)
                 end)
 
@@ -480,6 +484,9 @@ function Modifiers.Init(ctx, ui)
                     checkBtn.Activated:Connect(function()
                         state.SelectedModifiers[mod.Name] = not state.SelectedModifiers[mod.Name]
                         updateCheckVisual()
+                        if type(ctx.SaveConfig) == "function" then
+                            pcall(ctx.SaveConfig)
+                        end
                     end)
 
                     table.insert(restartItems, itemRow)

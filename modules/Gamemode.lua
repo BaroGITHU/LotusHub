@@ -190,6 +190,9 @@ function Gamemode.Init(ctx, ui)
             selectBtn.Activated:Connect(function()
                 state.TrialEndings[item.Name] = not state.TrialEndings[item.Name]
                 updateBtnVisual()
+                if type(ctx.SaveConfig) == "function" then
+                    pcall(ctx.SaveConfig)
+                end
             end)
         end
     end

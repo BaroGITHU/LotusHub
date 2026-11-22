@@ -103,14 +103,44 @@ function Menu.Create(ctx)
         return new("TextLabel", parent, base)
     end
 
-    -- [H] CỬA SỔ CHÍNH
-    local screen = new("ScreenGui", playerGui, {
+    -- [H] CỬA SỔ CHÍNH (Áp dụng kỹ thuật Infinite Yield: DisplayOrder tối đa, syn_protect_gui & gethui)
+    local targetGui = nil
+    local useSynProtect = false
+    if type(gethui) == "function" then
+        pcall(function()
+            local h = gethui()
+            if h then targetGui = h end
+        end)
+    end
+    if not targetGui then
+        pcall(function()
+            local cg = game:GetService("CoreGui")
+            if cg then
+                targetGui = cg
+                if type(syn_protect_gui) == "function" or (syn and type(syn.protect_gui) == "function") then
+                    useSynProtect = true
+                end
+            end
+        end)
+    end
+    if not targetGui then
+        targetGui = playerGui
+    end
+
+    local screen = new("ScreenGui", nil, {
         Name = "LotusHub_Gameplay_UI_Demo",
         IgnoreGuiInset = true,
         ResetOnSpawn = false,
-        DisplayOrder = 600,
+        DisplayOrder = 2147483647,
         ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
     })
+
+    if useSynProtect then
+        local protect = (type(syn_protect_gui) == "function" and syn_protect_gui)
+            or (syn and syn.protect_gui)
+        pcall(protect, screen)
+    end
+    screen.Parent = targetGui
 
     -- Khung cửa sổ chính 940x590, vị trí trung tâm màn hình
     local main = corner(new("Frame", screen, {
@@ -499,6 +529,9 @@ function Menu.Create(ctx)
             else
                 print("[LotusHub UI] " .. key .. " = " .. tostring(value) .. " (chỉ UI)")
             end
+            if type(ctx.SaveConfig) == "function" then
+                pcall(ctx.SaveConfig)
+            end
         end)
     end
 
@@ -673,6 +706,9 @@ function Menu.Create(ctx)
                 or (input.UserInputType == Enum.UserInputType.Touch and input == touchInput) then
                 draggingSlider = false
                 touchInput = nil
+                if type(ctx.SaveConfig) == "function" then
+                    pcall(ctx.SaveConfig)
+                end
             end
         end)
 
