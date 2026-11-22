@@ -462,20 +462,9 @@ function Menu.Create(ctx)
     -- OFF: nền C.track (tối), núm trắng nằm bên TRÁI tại (3, 3), state = false
     -- ON:  nền C.on (sáng), núm trắng nằm bên PHẢI tại (39, 3), state = true
     -- Vị trí và màu sắc cập nhật tức thời bằng gán thuộc tính trực tiếp khi click
+    -- CHỈ kích hoạt khi bấm trực tiếp vào cần gạt (track), KHÔNG kích hoạt khi click vào ô hàng (row)
     local function toggleItem(parent, text, readValue, saveValue)
         local row = itemFrame(parent, 44)
-
-        local rowButton = new("TextButton", row, {
-            Name = "RowClickArea",
-            Size = UDim2.new(1, 0, 1, 0),
-            Position = UDim2.fromOffset(0, 0),
-            BackgroundTransparency = 1,
-            Text = "",
-            AutoButtonColor = false,
-            Active = true,
-            Selectable = false,
-            ZIndex = 1,
-        })
 
         label(row, text, {
             Position = UDim2.fromOffset(14, 0),
@@ -526,7 +515,6 @@ function Menu.Create(ctx)
             redraw()
         end
 
-        rowButton.MouseButton1Click:Connect(triggerToggle)
         track.MouseButton1Click:Connect(triggerToggle)
 
         return row
@@ -546,7 +534,7 @@ function Menu.Create(ctx)
             if type(handler) == "table" then
                 for _, h in ipairs(handler) do pcall(h, value) end
             elseif type(handler) == "function" then
-                handler(value)
+                pcall(handler, value)
             else
                 print("[LotusHub UI] " .. key .. " = " .. tostring(value) .. " (chỉ UI)")
             end
@@ -1990,7 +1978,7 @@ function Gamemode.Init(ctx, ui)
         AutoHorseRacing = false,
         AutoTrialOfTheSaint = false,
         TrialEndings = {
-            ["True ending"] = true,
+            ["True ending"] = false,
             ["Secret ending"] = false,
         },
     }
@@ -2106,6 +2094,8 @@ function Gamemode.Init(ctx, ui)
         elLayout.Padding = UDim.new(0, 6)
         elLayout.Parent = endingRows
 
+        local updateVisuals = {}
+
         for index, item in ipairs(endingList) do
             local itemRow = Instance.new("Frame")
             itemRow.Size = UDim2.new(1, 0, 0, 42)
@@ -2158,11 +2148,22 @@ function Gamemode.Init(ctx, ui)
                 selectBtn.TextColor3 = isSelected and Color3.fromRGB(255, 255, 255) or C.muted
                 selectBtn.Text = isSelected and "CHỌN ✓" or "BỎ QUA"
             end
+            table.insert(updateVisuals, updateBtnVisual)
             updateBtnVisual()
 
             selectBtn.Activated:Connect(function()
-                state.TrialEndings[item.Name] = not state.TrialEndings[item.Name]
-                updateBtnVisual()
+                local willSelect = not (state.TrialEndings[item.Name] == true)
+                if willSelect then
+                    for _, other in ipairs(endingList) do
+                        state.TrialEndings[other.Name] = false
+                    end
+                    state.TrialEndings[item.Name] = true
+                else
+                    state.TrialEndings[item.Name] = false
+                end
+                for _, fn in ipairs(updateVisuals) do
+                    fn()
+                end
                 if type(ctx.SaveConfig) == "function" then
                     pcall(ctx.SaveConfig)
                 end
@@ -3062,14 +3063,22 @@ Modules.BoostPerformance = (function()
     
     CHỨC NĂNG A: FreeFire Graphics (Boost FPS)
       Khi ON:
-        1) Tắt GlobalShadows trong Lighting.
-        2) Vô hiệu hóa Bloom, Blur, DepthOfField, SunRays, ColorCorrection và các PostEffect.
-        3) Tắt/giảm các hiệu ứng hạt ParticleEmitter, Trail, Beam, Fire, Smoke, Sparkles.
-        4) Giảm chi tiết hiển thị: tắt CastShadow trên BasePart, chuyển Material sang SmoothPlastic,
-           ẩn Decal/Texture nặng, tắt Terrain Decoration (cỏ 3D) và giảm sóng nước Terrain.
-        5) Lắng nghe Workspace.DescendantAdded để tự động tối ưu quái vật và kỹ năng mới sinh ra trong trận.
+        1) Tối ưu engine kết xuất: settings().Rendering.QualityLevel = 1.
+        2) Tắt GlobalShadows, sương mù FogEnd/FogStart = 9e9 trong Lighting.
+        3) Vô hiệu hóa Bloom, Blur, DepthOfField, SunRays, ColorCorrection, Atmosphere và mọi PostEffect.
+        4) Tắt hiệu ứng hạt ParticleEmitter (Lifetime = 0, Enabled = false), Trail, Beam, Fire, Smoke, Sparkles, Highlight.
+        5) Loại bỏ texture của MeshPart (TextureID = "") và SpecialMesh (TextureId = ""), đưa toàn bộ vật thể về phong cách đồ họa phẳng mượt (Plastic) tối giản chuẩn Free Fire.
+        6) Tắt CastShadow, Reflectance = 0 trên toàn bộ BasePart, ẩn Decal/Texture.
+        7) Tắt Terrain Decoration (cỏ 3D) và làm phẳng sóng nước Terrain.
+        8) Lắng nghe Workspace.DescendantAdded để tự động tối ưu quái vật và kỹ năng mới sinh ra trong trận.
       Khi OFF:
-        Khôi phục toàn bộ các thuộc tính và trạng thái gốc đã lưu trước khi bật.
+        Khôi phục 100% toàn bộ thuộc tính, texture, hiệu ứng và cài đặt gốc đã lưu.
+
+    CHỨC NĂNG B: Delete Map
+      Ẩn toàn bộ chi tiết hình học của map trong Workspace (giữ nguyên va chạm để không rơi xuống void).
+
+    CHỨC NĂNG C: Delete Entities
+      Ẩn toàn bộ quái/thực thể trong Workspace.
 ]]
 local BoostPerformance = {}
 
@@ -3088,16 +3097,20 @@ function BoostPerformance.Init(ctx, ui)
 
     -- Bảng lưu trữ trạng thái gốc để khôi phục khi OFF
     local savedState = {
+        qualityLevel = nil,
         lighting = {},
         terrain = {},
-        postEffects = {},     -- [instance] = originalEnabled
-        emitters = {},        -- [instance] = originalEnabled
-        trails = {},          -- [instance] = originalEnabled
-        beams = {},           -- [instance] = originalEnabled
-        miscEffects = {},     -- [instance] = originalEnabled (Fire, Smoke, Sparkles)
-        castShadows = {},     -- [part] = originalCastShadow
-        materials = {},       -- [part] = originalMaterial
-        decals = {},          -- [decal] = originalTransparency
+        postEffects = {},         -- [instance] = originalEnabled
+        emitters = {},            -- [instance] = { Enabled, Lifetime }
+        trails = {},              -- [instance] = originalEnabled
+        beams = {},               -- [instance] = originalEnabled
+        miscEffects = {},         -- [instance] = originalEnabled (Fire, Smoke, Sparkles, Highlight)
+        castShadows = {},         -- [part] = originalCastShadow
+        materials = {},           -- [part] = originalMaterial
+        reflectance = {},         -- [part] = originalReflectance
+        decals = {},              -- [decal] = originalTransparency
+        meshTextures = {},        -- [meshPart] = originalTextureID
+        specialMeshTextures = {}, -- [specialMesh] = originalTextureId
     }
 
     local function log(message)
@@ -3133,8 +3146,12 @@ function BoostPerformance.Init(ctx, ui)
         -- A. Hiệu ứng hạt và ánh sáng động
         if inst:IsA("ParticleEmitter") then
             if savedState.emitters[inst] == nil then
-                savedState.emitters[inst] = inst.Enabled
+                savedState.emitters[inst] = {
+                    Enabled = inst.Enabled,
+                    Lifetime = inst.Lifetime,
+                }
                 inst.Enabled = false
+                pcall(function() inst.Lifetime = NumberRange.new(0) end)
             end
         elseif inst:IsA("Trail") then
             if savedState.trails[inst] == nil then
@@ -3146,21 +3163,57 @@ function BoostPerformance.Init(ctx, ui)
                 savedState.beams[inst] = inst.Enabled
                 inst.Enabled = false
             end
-        elseif inst:IsA("Fire") or inst:IsA("Smoke") or inst:IsA("Sparkles") then
+        elseif inst:IsA("Fire") or inst:IsA("Smoke") or inst:IsA("Sparkles") or inst:IsA("Highlight") then
             if savedState.miscEffects[inst] == nil then
                 savedState.miscEffects[inst] = inst.Enabled
                 inst.Enabled = false
             end
-        -- B. Giảm chi tiết hình học của vật thể
+        -- B. Giảm chi tiết hình học của vật thể & loại bỏ texture chuẩn Free Fire
+        elseif inst:IsA("MeshPart") then
+            if inst.CastShadow and savedState.castShadows[inst] == nil then
+                savedState.castShadows[inst] = inst.CastShadow
+                inst.CastShadow = false
+            end
+            if inst.Material ~= Enum.Material.Plastic then
+                if savedState.materials[inst] == nil then
+                    savedState.materials[inst] = inst.Material
+                    inst.Material = Enum.Material.Plastic
+                end
+            end
+            if inst.Reflectance ~= 0 then
+                if savedState.reflectance[inst] == nil then
+                    savedState.reflectance[inst] = inst.Reflectance
+                    inst.Reflectance = 0
+                end
+            end
+            if inst.TextureID ~= "" then
+                if savedState.meshTextures[inst] == nil then
+                    savedState.meshTextures[inst] = inst.TextureID
+                    inst.TextureID = ""
+                end
+            end
+        elseif inst:IsA("SpecialMesh") then
+            if inst.TextureId ~= "" then
+                if savedState.specialMeshTextures[inst] == nil then
+                    savedState.specialMeshTextures[inst] = inst.TextureId
+                    inst.TextureId = ""
+                end
+            end
         elseif inst:IsA("BasePart") then
             if inst.CastShadow and savedState.castShadows[inst] == nil then
                 savedState.castShadows[inst] = inst.CastShadow
                 inst.CastShadow = false
             end
-            if inst.Material ~= Enum.Material.SmoothPlastic and inst.Material ~= Enum.Material.Plastic then
+            if inst.Material ~= Enum.Material.Plastic then
                 if savedState.materials[inst] == nil then
                     savedState.materials[inst] = inst.Material
-                    inst.Material = Enum.Material.SmoothPlastic
+                    inst.Material = Enum.Material.Plastic
+                end
+            end
+            if inst.Reflectance ~= 0 then
+                if savedState.reflectance[inst] == nil then
+                    savedState.reflectance[inst] = inst.Reflectance
+                    inst.Reflectance = 0
                 end
             end
         elseif inst:IsA("Decal") or inst:IsA("Texture") then
@@ -3177,15 +3230,37 @@ function BoostPerformance.Init(ctx, ui)
         session.active = true
         log("Đang áp dụng FreeFire Graphics (Boost FPS)...")
 
-        -- 1. Lighting: Tắt GlobalShadows
+        -- 1. Engine Quality: Hạ chất lượng kết xuất xuống mức tối thiểu (Boost FPS tối đa)
+        pcall(function()
+            if savedState.qualityLevel == nil then
+                savedState.qualityLevel = settings().Rendering.QualityLevel
+            end
+            settings().Rendering.QualityLevel = 1
+        end)
+
+        -- 2. Lighting: Tắt bóng đổ, khử sương mù & chuyển Compatibility mode nếu có hỗ trợ
         pcall(function()
             if savedState.lighting.GlobalShadows == nil then
                 savedState.lighting.GlobalShadows = Lighting.GlobalShadows
                 Lighting.GlobalShadows = false
             end
+            if savedState.lighting.FogEnd == nil then
+                savedState.lighting.FogEnd = Lighting.FogEnd
+                Lighting.FogEnd = 9e9
+            end
+            if savedState.lighting.FogStart == nil then
+                savedState.lighting.FogStart = Lighting.FogStart
+                Lighting.FogStart = 9e9
+            end
+            pcall(function()
+                if type(sethiddenproperty) == "function" then
+                    savedState.lighting.Technology = Lighting.Technology
+                    sethiddenproperty(Lighting, "Technology", 2)
+                end
+            end)
         end)
 
-        -- 2. Lighting & Camera: Tắt Post-processing
+        -- 3. Lighting & Camera: Tắt toàn bộ Post-processing
         for _, child in ipairs(Lighting:GetChildren()) do
             optimizePostEffect(child)
         end
@@ -3196,13 +3271,18 @@ function BoostPerformance.Init(ctx, ui)
             end
         end
 
-        -- 3. Terrain: Tắt cỏ 3D và sóng nước
+        -- 4. Terrain: Tắt cỏ 3D, làm phẳng sóng nước
         pcall(function()
             local terrain = Workspace:FindFirstChildOfClass("Terrain")
             if terrain then
                 if savedState.terrain.Decoration == nil then
                     savedState.terrain.Decoration = terrain.Decoration
                     terrain.Decoration = false
+                    pcall(function()
+                        if type(sethiddenproperty) == "function" then
+                            sethiddenproperty(terrain, "Decoration", false)
+                        end
+                    end)
                 end
                 if savedState.terrain.WaterWaveSize == nil then
                     savedState.terrain.WaterWaveSize = terrain.WaterWaveSize
@@ -3216,10 +3296,14 @@ function BoostPerformance.Init(ctx, ui)
                     savedState.terrain.WaterReflectance = terrain.WaterReflectance
                     terrain.WaterReflectance = 0
                 end
+                if savedState.terrain.WaterTransparency == nil then
+                    savedState.terrain.WaterTransparency = terrain.WaterTransparency
+                    terrain.WaterTransparency = 1
+                end
             end
         end)
 
-        -- 4. Quét toàn bộ Workspace hiện có theo từng đợt để không giật lag
+        -- 5. Quét toàn bộ Workspace hiện có theo từng đợt để không giật lag
         task.spawn(function()
             local descendants = Workspace:GetDescendants()
             for i, inst in ipairs(descendants) do
@@ -3232,7 +3316,7 @@ function BoostPerformance.Init(ctx, ui)
             log("Đã áp dụng tối ưu toàn bộ Workspace.")
         end)
 
-        -- 5. Lắng nghe DescendantAdded để tự động xử lý kỹ năng/quái vật mới
+        -- 6. Lắng nghe DescendantAdded để tự động xử lý kỹ năng/quái vật mới
         if not session.listenerConnection then
             session.listenerConnection = Workspace.DescendantAdded:Connect(function(inst)
                 if not session.active or not ctx.alive then return end
@@ -3256,15 +3340,32 @@ function BoostPerformance.Init(ctx, ui)
             session.listenerConnection = nil
         end
 
-        -- 2. Khôi phục Lighting
+        -- 2. Khôi phục Engine Quality
+        pcall(function()
+            if savedState.qualityLevel ~= nil then
+                settings().Rendering.QualityLevel = savedState.qualityLevel
+            end
+        end)
+        savedState.qualityLevel = nil
+
+        -- 3. Khôi phục Lighting
         pcall(function()
             if savedState.lighting.GlobalShadows ~= nil then
                 Lighting.GlobalShadows = savedState.lighting.GlobalShadows
             end
+            if savedState.lighting.FogEnd ~= nil then
+                Lighting.FogEnd = savedState.lighting.FogEnd
+            end
+            if savedState.lighting.FogStart ~= nil then
+                Lighting.FogStart = savedState.lighting.FogStart
+            end
+            if savedState.lighting.Technology ~= nil and type(sethiddenproperty) == "function" then
+                pcall(sethiddenproperty, Lighting, "Technology", savedState.lighting.Technology)
+            end
         end)
         savedState.lighting = {}
 
-        -- 3. Khôi phục PostEffects
+        -- 4. Khôi phục PostEffects
         for obj, origEnabled in pairs(savedState.postEffects) do
             pcall(function()
                 if obj and obj.Parent then
@@ -3274,12 +3375,17 @@ function BoostPerformance.Init(ctx, ui)
         end
         savedState.postEffects = {}
 
-        -- 4. Khôi phục Terrain
+        -- 5. Khôi phục Terrain
         pcall(function()
             local terrain = Workspace:FindFirstChildOfClass("Terrain")
             if terrain then
                 if savedState.terrain.Decoration ~= nil then
                     terrain.Decoration = savedState.terrain.Decoration
+                    pcall(function()
+                        if type(sethiddenproperty) == "function" then
+                            sethiddenproperty(terrain, "Decoration", savedState.terrain.Decoration)
+                        end
+                    end)
                 end
                 if savedState.terrain.WaterWaveSize ~= nil then
                     terrain.WaterWaveSize = savedState.terrain.WaterWaveSize
@@ -3290,15 +3396,19 @@ function BoostPerformance.Init(ctx, ui)
                 if savedState.terrain.WaterReflectance ~= nil then
                     terrain.WaterReflectance = savedState.terrain.WaterReflectance
                 end
+                if savedState.terrain.WaterTransparency ~= nil then
+                    terrain.WaterTransparency = savedState.terrain.WaterTransparency
+                end
             end
         end)
         savedState.terrain = {}
 
-        -- 5. Khôi phục ParticleEmitter, Trail, Beam, Fire, v.v.
-        for obj, origEnabled in pairs(savedState.emitters) do
+        -- 6. Khôi phục ParticleEmitter, Trail, Beam, Fire, v.v.
+        for obj, origData in pairs(savedState.emitters) do
             pcall(function()
                 if obj and obj.Parent then
-                    obj.Enabled = origEnabled
+                    obj.Enabled = origData.Enabled
+                    obj.Lifetime = origData.Lifetime
                 end
             end)
         end
@@ -3331,7 +3441,26 @@ function BoostPerformance.Init(ctx, ui)
         end
         savedState.miscEffects = {}
 
-        -- 6. Khôi phục BasePart (CastShadow & Material)
+        -- 7. Khôi phục Texture của MeshPart & SpecialMesh
+        for mesh, origTexture in pairs(savedState.meshTextures) do
+            pcall(function()
+                if mesh and mesh.Parent then
+                    mesh.TextureID = origTexture
+                end
+            end)
+        end
+        savedState.meshTextures = {}
+
+        for smesh, origTexture in pairs(savedState.specialMeshTextures) do
+            pcall(function()
+                if smesh and smesh.Parent then
+                    smesh.TextureId = origTexture
+                end
+            end)
+        end
+        savedState.specialMeshTextures = {}
+
+        -- 8. Khôi phục BasePart (CastShadow, Material & Reflectance)
         for part, origShadow in pairs(savedState.castShadows) do
             pcall(function()
                 if part and part.Parent then
@@ -3350,7 +3479,16 @@ function BoostPerformance.Init(ctx, ui)
         end
         savedState.materials = {}
 
-        -- 7. Khôi phục Decals / Textures
+        for part, origRef in pairs(savedState.reflectance) do
+            pcall(function()
+                if part and part.Parent then
+                    part.Reflectance = origRef
+                end
+            end)
+        end
+        savedState.reflectance = {}
+
+        -- 9. Khôi phục Decals / Textures
         for decal, origTrans in pairs(savedState.decals) do
             pcall(function()
                 if decal and decal.Parent then
@@ -3376,6 +3514,68 @@ function BoostPerformance.Init(ctx, ui)
     if state.FreeFireGraphics == true then
         task.defer(enableFreeFire)
     end
+
+    -- [6] ĐĂNG KÝ TOGGLE HANDLER CHO DELETE MAP
+    local mapSaved = {}
+    local function setMapDeleted(delete)
+        for _, name in ipairs({"Map", "World", "Stage", "Environment", "Level"}) do
+            local folder = Workspace:FindFirstChild(name)
+            if folder then
+                for _, part in ipairs(folder:GetDescendants()) do
+                    if part:IsA("BasePart") then
+                        if delete then
+                            if mapSaved[part] == nil then
+                                mapSaved[part] = part.Transparency
+                                part.Transparency = 1
+                            end
+                        else
+                            if mapSaved[part] ~= nil then
+                                part.Transparency = mapSaved[part]
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        if not delete then mapSaved = {} end
+        log(delete and "Delete Map: ĐÃ BẬT (ẩn bản đồ)" or "Delete Map: ĐÃ TẮT (khôi phục bản đồ)")
+    end
+
+    ui:SetToggleHandler("DeleteMap", function(enabled)
+        setMapDeleted(enabled)
+    end)
+    if state.DeleteMap == true then task.defer(function() setMapDeleted(true) end) end
+
+    -- [7] ĐĂNG KÝ TOGGLE HANDLER CHO DELETE ENTITIES
+    local entitiesSaved = {}
+    local function setEntitiesDeleted(delete)
+        for _, name in ipairs({"Enemies", "Mobs", "Entities", "Units"}) do
+            local folder = Workspace:FindFirstChild(name)
+            if folder then
+                for _, part in ipairs(folder:GetDescendants()) do
+                    if part:IsA("BasePart") then
+                        if delete then
+                            if entitiesSaved[part] == nil then
+                                entitiesSaved[part] = part.Transparency
+                                part.Transparency = 1
+                            end
+                        else
+                            if entitiesSaved[part] ~= nil then
+                                part.Transparency = entitiesSaved[part]
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        if not delete then entitiesSaved = {} end
+        log(delete and "Delete Entities: ĐÃ BẬT (ẩn thực thể)" or "Delete Entities: ĐÃ TẮT (khôi phục thực thể)")
+    end
+
+    ui:SetToggleHandler("DeleteEntities", function(enabled)
+        setEntitiesDeleted(enabled)
+    end)
+    if state.DeleteEntities == true then task.defer(function() setEntitiesDeleted(true) end) end
 end
 
 return BoostPerformance
@@ -4670,7 +4870,7 @@ function AutoTrialOfTheSaint.Init(ctx, ui)
 
     if type(state.TrialEndings) ~= "table" then
         state.TrialEndings = {
-            ["True ending"] = true,
+            ["True ending"] = false,
             ["Secret ending"] = false,
         }
     end
@@ -5362,20 +5562,9 @@ function Menu.Create(ctx)
     -- OFF: nền C.track (tối), núm trắng nằm bên TRÁI tại (3, 3), state = false
     -- ON:  nền C.on (sáng), núm trắng nằm bên PHẢI tại (39, 3), state = true
     -- Vị trí và màu sắc cập nhật tức thời bằng gán thuộc tính trực tiếp khi click
+    -- CHỈ kích hoạt khi bấm trực tiếp vào cần gạt (track), KHÔNG kích hoạt khi click vào ô hàng (row)
     local function toggleItem(parent, text, readValue, saveValue)
         local row = itemFrame(parent, 44)
-
-        local rowButton = new("TextButton", row, {
-            Name = "RowClickArea",
-            Size = UDim2.new(1, 0, 1, 0),
-            Position = UDim2.fromOffset(0, 0),
-            BackgroundTransparency = 1,
-            Text = "",
-            AutoButtonColor = false,
-            Active = true,
-            Selectable = false,
-            ZIndex = 1,
-        })
 
         label(row, text, {
             Position = UDim2.fromOffset(14, 0),
@@ -5426,7 +5615,6 @@ function Menu.Create(ctx)
             redraw()
         end
 
-        rowButton.MouseButton1Click:Connect(triggerToggle)
         track.MouseButton1Click:Connect(triggerToggle)
 
         return row
@@ -5446,7 +5634,7 @@ function Menu.Create(ctx)
             if type(handler) == "table" then
                 for _, h in ipairs(handler) do pcall(h, value) end
             elseif type(handler) == "function" then
-                handler(value)
+                pcall(handler, value)
             else
                 print("[LotusHub UI] " .. key .. " = " .. tostring(value) .. " (chỉ UI)")
             end
@@ -6890,7 +7078,7 @@ function Gamemode.Init(ctx, ui)
         AutoHorseRacing = false,
         AutoTrialOfTheSaint = false,
         TrialEndings = {
-            ["True ending"] = true,
+            ["True ending"] = false,
             ["Secret ending"] = false,
         },
     }
@@ -7006,6 +7194,8 @@ function Gamemode.Init(ctx, ui)
         elLayout.Padding = UDim.new(0, 6)
         elLayout.Parent = endingRows
 
+        local updateVisuals = {}
+
         for index, item in ipairs(endingList) do
             local itemRow = Instance.new("Frame")
             itemRow.Size = UDim2.new(1, 0, 0, 42)
@@ -7058,11 +7248,22 @@ function Gamemode.Init(ctx, ui)
                 selectBtn.TextColor3 = isSelected and Color3.fromRGB(255, 255, 255) or C.muted
                 selectBtn.Text = isSelected and "CHỌN ✓" or "BỎ QUA"
             end
+            table.insert(updateVisuals, updateBtnVisual)
             updateBtnVisual()
 
             selectBtn.Activated:Connect(function()
-                state.TrialEndings[item.Name] = not state.TrialEndings[item.Name]
-                updateBtnVisual()
+                local willSelect = not (state.TrialEndings[item.Name] == true)
+                if willSelect then
+                    for _, other in ipairs(endingList) do
+                        state.TrialEndings[other.Name] = false
+                    end
+                    state.TrialEndings[item.Name] = true
+                else
+                    state.TrialEndings[item.Name] = false
+                end
+                for _, fn in ipairs(updateVisuals) do
+                    fn()
+                end
                 if type(ctx.SaveConfig) == "function" then
                     pcall(ctx.SaveConfig)
                 end
@@ -7962,14 +8163,22 @@ Modules.BoostPerformance = (function()
     
     CHỨC NĂNG A: FreeFire Graphics (Boost FPS)
       Khi ON:
-        1) Tắt GlobalShadows trong Lighting.
-        2) Vô hiệu hóa Bloom, Blur, DepthOfField, SunRays, ColorCorrection và các PostEffect.
-        3) Tắt/giảm các hiệu ứng hạt ParticleEmitter, Trail, Beam, Fire, Smoke, Sparkles.
-        4) Giảm chi tiết hiển thị: tắt CastShadow trên BasePart, chuyển Material sang SmoothPlastic,
-           ẩn Decal/Texture nặng, tắt Terrain Decoration (cỏ 3D) và giảm sóng nước Terrain.
-        5) Lắng nghe Workspace.DescendantAdded để tự động tối ưu quái vật và kỹ năng mới sinh ra trong trận.
+        1) Tối ưu engine kết xuất: settings().Rendering.QualityLevel = 1.
+        2) Tắt GlobalShadows, sương mù FogEnd/FogStart = 9e9 trong Lighting.
+        3) Vô hiệu hóa Bloom, Blur, DepthOfField, SunRays, ColorCorrection, Atmosphere và mọi PostEffect.
+        4) Tắt hiệu ứng hạt ParticleEmitter (Lifetime = 0, Enabled = false), Trail, Beam, Fire, Smoke, Sparkles, Highlight.
+        5) Loại bỏ texture của MeshPart (TextureID = "") và SpecialMesh (TextureId = ""), đưa toàn bộ vật thể về phong cách đồ họa phẳng mượt (Plastic) tối giản chuẩn Free Fire.
+        6) Tắt CastShadow, Reflectance = 0 trên toàn bộ BasePart, ẩn Decal/Texture.
+        7) Tắt Terrain Decoration (cỏ 3D) và làm phẳng sóng nước Terrain.
+        8) Lắng nghe Workspace.DescendantAdded để tự động tối ưu quái vật và kỹ năng mới sinh ra trong trận.
       Khi OFF:
-        Khôi phục toàn bộ các thuộc tính và trạng thái gốc đã lưu trước khi bật.
+        Khôi phục 100% toàn bộ thuộc tính, texture, hiệu ứng và cài đặt gốc đã lưu.
+
+    CHỨC NĂNG B: Delete Map
+      Ẩn toàn bộ chi tiết hình học của map trong Workspace (giữ nguyên va chạm để không rơi xuống void).
+
+    CHỨC NĂNG C: Delete Entities
+      Ẩn toàn bộ quái/thực thể trong Workspace.
 ]]
 local BoostPerformance = {}
 
@@ -7988,16 +8197,20 @@ function BoostPerformance.Init(ctx, ui)
 
     -- Bảng lưu trữ trạng thái gốc để khôi phục khi OFF
     local savedState = {
+        qualityLevel = nil,
         lighting = {},
         terrain = {},
-        postEffects = {},     -- [instance] = originalEnabled
-        emitters = {},        -- [instance] = originalEnabled
-        trails = {},          -- [instance] = originalEnabled
-        beams = {},           -- [instance] = originalEnabled
-        miscEffects = {},     -- [instance] = originalEnabled (Fire, Smoke, Sparkles)
-        castShadows = {},     -- [part] = originalCastShadow
-        materials = {},       -- [part] = originalMaterial
-        decals = {},          -- [decal] = originalTransparency
+        postEffects = {},         -- [instance] = originalEnabled
+        emitters = {},            -- [instance] = { Enabled, Lifetime }
+        trails = {},              -- [instance] = originalEnabled
+        beams = {},               -- [instance] = originalEnabled
+        miscEffects = {},         -- [instance] = originalEnabled (Fire, Smoke, Sparkles, Highlight)
+        castShadows = {},         -- [part] = originalCastShadow
+        materials = {},           -- [part] = originalMaterial
+        reflectance = {},         -- [part] = originalReflectance
+        decals = {},              -- [decal] = originalTransparency
+        meshTextures = {},        -- [meshPart] = originalTextureID
+        specialMeshTextures = {}, -- [specialMesh] = originalTextureId
     }
 
     local function log(message)
@@ -8033,8 +8246,12 @@ function BoostPerformance.Init(ctx, ui)
         -- A. Hiệu ứng hạt và ánh sáng động
         if inst:IsA("ParticleEmitter") then
             if savedState.emitters[inst] == nil then
-                savedState.emitters[inst] = inst.Enabled
+                savedState.emitters[inst] = {
+                    Enabled = inst.Enabled,
+                    Lifetime = inst.Lifetime,
+                }
                 inst.Enabled = false
+                pcall(function() inst.Lifetime = NumberRange.new(0) end)
             end
         elseif inst:IsA("Trail") then
             if savedState.trails[inst] == nil then
@@ -8046,21 +8263,57 @@ function BoostPerformance.Init(ctx, ui)
                 savedState.beams[inst] = inst.Enabled
                 inst.Enabled = false
             end
-        elseif inst:IsA("Fire") or inst:IsA("Smoke") or inst:IsA("Sparkles") then
+        elseif inst:IsA("Fire") or inst:IsA("Smoke") or inst:IsA("Sparkles") or inst:IsA("Highlight") then
             if savedState.miscEffects[inst] == nil then
                 savedState.miscEffects[inst] = inst.Enabled
                 inst.Enabled = false
             end
-        -- B. Giảm chi tiết hình học của vật thể
+        -- B. Giảm chi tiết hình học của vật thể & loại bỏ texture chuẩn Free Fire
+        elseif inst:IsA("MeshPart") then
+            if inst.CastShadow and savedState.castShadows[inst] == nil then
+                savedState.castShadows[inst] = inst.CastShadow
+                inst.CastShadow = false
+            end
+            if inst.Material ~= Enum.Material.Plastic then
+                if savedState.materials[inst] == nil then
+                    savedState.materials[inst] = inst.Material
+                    inst.Material = Enum.Material.Plastic
+                end
+            end
+            if inst.Reflectance ~= 0 then
+                if savedState.reflectance[inst] == nil then
+                    savedState.reflectance[inst] = inst.Reflectance
+                    inst.Reflectance = 0
+                end
+            end
+            if inst.TextureID ~= "" then
+                if savedState.meshTextures[inst] == nil then
+                    savedState.meshTextures[inst] = inst.TextureID
+                    inst.TextureID = ""
+                end
+            end
+        elseif inst:IsA("SpecialMesh") then
+            if inst.TextureId ~= "" then
+                if savedState.specialMeshTextures[inst] == nil then
+                    savedState.specialMeshTextures[inst] = inst.TextureId
+                    inst.TextureId = ""
+                end
+            end
         elseif inst:IsA("BasePart") then
             if inst.CastShadow and savedState.castShadows[inst] == nil then
                 savedState.castShadows[inst] = inst.CastShadow
                 inst.CastShadow = false
             end
-            if inst.Material ~= Enum.Material.SmoothPlastic and inst.Material ~= Enum.Material.Plastic then
+            if inst.Material ~= Enum.Material.Plastic then
                 if savedState.materials[inst] == nil then
                     savedState.materials[inst] = inst.Material
-                    inst.Material = Enum.Material.SmoothPlastic
+                    inst.Material = Enum.Material.Plastic
+                end
+            end
+            if inst.Reflectance ~= 0 then
+                if savedState.reflectance[inst] == nil then
+                    savedState.reflectance[inst] = inst.Reflectance
+                    inst.Reflectance = 0
                 end
             end
         elseif inst:IsA("Decal") or inst:IsA("Texture") then
@@ -8077,15 +8330,37 @@ function BoostPerformance.Init(ctx, ui)
         session.active = true
         log("Đang áp dụng FreeFire Graphics (Boost FPS)...")
 
-        -- 1. Lighting: Tắt GlobalShadows
+        -- 1. Engine Quality: Hạ chất lượng kết xuất xuống mức tối thiểu (Boost FPS tối đa)
+        pcall(function()
+            if savedState.qualityLevel == nil then
+                savedState.qualityLevel = settings().Rendering.QualityLevel
+            end
+            settings().Rendering.QualityLevel = 1
+        end)
+
+        -- 2. Lighting: Tắt bóng đổ, khử sương mù & chuyển Compatibility mode nếu có hỗ trợ
         pcall(function()
             if savedState.lighting.GlobalShadows == nil then
                 savedState.lighting.GlobalShadows = Lighting.GlobalShadows
                 Lighting.GlobalShadows = false
             end
+            if savedState.lighting.FogEnd == nil then
+                savedState.lighting.FogEnd = Lighting.FogEnd
+                Lighting.FogEnd = 9e9
+            end
+            if savedState.lighting.FogStart == nil then
+                savedState.lighting.FogStart = Lighting.FogStart
+                Lighting.FogStart = 9e9
+            end
+            pcall(function()
+                if type(sethiddenproperty) == "function" then
+                    savedState.lighting.Technology = Lighting.Technology
+                    sethiddenproperty(Lighting, "Technology", 2)
+                end
+            end)
         end)
 
-        -- 2. Lighting & Camera: Tắt Post-processing
+        -- 3. Lighting & Camera: Tắt toàn bộ Post-processing
         for _, child in ipairs(Lighting:GetChildren()) do
             optimizePostEffect(child)
         end
@@ -8096,13 +8371,18 @@ function BoostPerformance.Init(ctx, ui)
             end
         end
 
-        -- 3. Terrain: Tắt cỏ 3D và sóng nước
+        -- 4. Terrain: Tắt cỏ 3D, làm phẳng sóng nước
         pcall(function()
             local terrain = Workspace:FindFirstChildOfClass("Terrain")
             if terrain then
                 if savedState.terrain.Decoration == nil then
                     savedState.terrain.Decoration = terrain.Decoration
                     terrain.Decoration = false
+                    pcall(function()
+                        if type(sethiddenproperty) == "function" then
+                            sethiddenproperty(terrain, "Decoration", false)
+                        end
+                    end)
                 end
                 if savedState.terrain.WaterWaveSize == nil then
                     savedState.terrain.WaterWaveSize = terrain.WaterWaveSize
@@ -8116,10 +8396,14 @@ function BoostPerformance.Init(ctx, ui)
                     savedState.terrain.WaterReflectance = terrain.WaterReflectance
                     terrain.WaterReflectance = 0
                 end
+                if savedState.terrain.WaterTransparency == nil then
+                    savedState.terrain.WaterTransparency = terrain.WaterTransparency
+                    terrain.WaterTransparency = 1
+                end
             end
         end)
 
-        -- 4. Quét toàn bộ Workspace hiện có theo từng đợt để không giật lag
+        -- 5. Quét toàn bộ Workspace hiện có theo từng đợt để không giật lag
         task.spawn(function()
             local descendants = Workspace:GetDescendants()
             for i, inst in ipairs(descendants) do
@@ -8132,7 +8416,7 @@ function BoostPerformance.Init(ctx, ui)
             log("Đã áp dụng tối ưu toàn bộ Workspace.")
         end)
 
-        -- 5. Lắng nghe DescendantAdded để tự động xử lý kỹ năng/quái vật mới
+        -- 6. Lắng nghe DescendantAdded để tự động xử lý kỹ năng/quái vật mới
         if not session.listenerConnection then
             session.listenerConnection = Workspace.DescendantAdded:Connect(function(inst)
                 if not session.active or not ctx.alive then return end
@@ -8156,15 +8440,32 @@ function BoostPerformance.Init(ctx, ui)
             session.listenerConnection = nil
         end
 
-        -- 2. Khôi phục Lighting
+        -- 2. Khôi phục Engine Quality
+        pcall(function()
+            if savedState.qualityLevel ~= nil then
+                settings().Rendering.QualityLevel = savedState.qualityLevel
+            end
+        end)
+        savedState.qualityLevel = nil
+
+        -- 3. Khôi phục Lighting
         pcall(function()
             if savedState.lighting.GlobalShadows ~= nil then
                 Lighting.GlobalShadows = savedState.lighting.GlobalShadows
             end
+            if savedState.lighting.FogEnd ~= nil then
+                Lighting.FogEnd = savedState.lighting.FogEnd
+            end
+            if savedState.lighting.FogStart ~= nil then
+                Lighting.FogStart = savedState.lighting.FogStart
+            end
+            if savedState.lighting.Technology ~= nil and type(sethiddenproperty) == "function" then
+                pcall(sethiddenproperty, Lighting, "Technology", savedState.lighting.Technology)
+            end
         end)
         savedState.lighting = {}
 
-        -- 3. Khôi phục PostEffects
+        -- 4. Khôi phục PostEffects
         for obj, origEnabled in pairs(savedState.postEffects) do
             pcall(function()
                 if obj and obj.Parent then
@@ -8174,12 +8475,17 @@ function BoostPerformance.Init(ctx, ui)
         end
         savedState.postEffects = {}
 
-        -- 4. Khôi phục Terrain
+        -- 5. Khôi phục Terrain
         pcall(function()
             local terrain = Workspace:FindFirstChildOfClass("Terrain")
             if terrain then
                 if savedState.terrain.Decoration ~= nil then
                     terrain.Decoration = savedState.terrain.Decoration
+                    pcall(function()
+                        if type(sethiddenproperty) == "function" then
+                            sethiddenproperty(terrain, "Decoration", savedState.terrain.Decoration)
+                        end
+                    end)
                 end
                 if savedState.terrain.WaterWaveSize ~= nil then
                     terrain.WaterWaveSize = savedState.terrain.WaterWaveSize
@@ -8190,15 +8496,19 @@ function BoostPerformance.Init(ctx, ui)
                 if savedState.terrain.WaterReflectance ~= nil then
                     terrain.WaterReflectance = savedState.terrain.WaterReflectance
                 end
+                if savedState.terrain.WaterTransparency ~= nil then
+                    terrain.WaterTransparency = savedState.terrain.WaterTransparency
+                end
             end
         end)
         savedState.terrain = {}
 
-        -- 5. Khôi phục ParticleEmitter, Trail, Beam, Fire, v.v.
-        for obj, origEnabled in pairs(savedState.emitters) do
+        -- 6. Khôi phục ParticleEmitter, Trail, Beam, Fire, v.v.
+        for obj, origData in pairs(savedState.emitters) do
             pcall(function()
                 if obj and obj.Parent then
-                    obj.Enabled = origEnabled
+                    obj.Enabled = origData.Enabled
+                    obj.Lifetime = origData.Lifetime
                 end
             end)
         end
@@ -8231,7 +8541,26 @@ function BoostPerformance.Init(ctx, ui)
         end
         savedState.miscEffects = {}
 
-        -- 6. Khôi phục BasePart (CastShadow & Material)
+        -- 7. Khôi phục Texture của MeshPart & SpecialMesh
+        for mesh, origTexture in pairs(savedState.meshTextures) do
+            pcall(function()
+                if mesh and mesh.Parent then
+                    mesh.TextureID = origTexture
+                end
+            end)
+        end
+        savedState.meshTextures = {}
+
+        for smesh, origTexture in pairs(savedState.specialMeshTextures) do
+            pcall(function()
+                if smesh and smesh.Parent then
+                    smesh.TextureId = origTexture
+                end
+            end)
+        end
+        savedState.specialMeshTextures = {}
+
+        -- 8. Khôi phục BasePart (CastShadow, Material & Reflectance)
         for part, origShadow in pairs(savedState.castShadows) do
             pcall(function()
                 if part and part.Parent then
@@ -8250,7 +8579,16 @@ function BoostPerformance.Init(ctx, ui)
         end
         savedState.materials = {}
 
-        -- 7. Khôi phục Decals / Textures
+        for part, origRef in pairs(savedState.reflectance) do
+            pcall(function()
+                if part and part.Parent then
+                    part.Reflectance = origRef
+                end
+            end)
+        end
+        savedState.reflectance = {}
+
+        -- 9. Khôi phục Decals / Textures
         for decal, origTrans in pairs(savedState.decals) do
             pcall(function()
                 if decal and decal.Parent then
@@ -8276,6 +8614,68 @@ function BoostPerformance.Init(ctx, ui)
     if state.FreeFireGraphics == true then
         task.defer(enableFreeFire)
     end
+
+    -- [6] ĐĂNG KÝ TOGGLE HANDLER CHO DELETE MAP
+    local mapSaved = {}
+    local function setMapDeleted(delete)
+        for _, name in ipairs({"Map", "World", "Stage", "Environment", "Level"}) do
+            local folder = Workspace:FindFirstChild(name)
+            if folder then
+                for _, part in ipairs(folder:GetDescendants()) do
+                    if part:IsA("BasePart") then
+                        if delete then
+                            if mapSaved[part] == nil then
+                                mapSaved[part] = part.Transparency
+                                part.Transparency = 1
+                            end
+                        else
+                            if mapSaved[part] ~= nil then
+                                part.Transparency = mapSaved[part]
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        if not delete then mapSaved = {} end
+        log(delete and "Delete Map: ĐÃ BẬT (ẩn bản đồ)" or "Delete Map: ĐÃ TẮT (khôi phục bản đồ)")
+    end
+
+    ui:SetToggleHandler("DeleteMap", function(enabled)
+        setMapDeleted(enabled)
+    end)
+    if state.DeleteMap == true then task.defer(function() setMapDeleted(true) end) end
+
+    -- [7] ĐĂNG KÝ TOGGLE HANDLER CHO DELETE ENTITIES
+    local entitiesSaved = {}
+    local function setEntitiesDeleted(delete)
+        for _, name in ipairs({"Enemies", "Mobs", "Entities", "Units"}) do
+            local folder = Workspace:FindFirstChild(name)
+            if folder then
+                for _, part in ipairs(folder:GetDescendants()) do
+                    if part:IsA("BasePart") then
+                        if delete then
+                            if entitiesSaved[part] == nil then
+                                entitiesSaved[part] = part.Transparency
+                                part.Transparency = 1
+                            end
+                        else
+                            if entitiesSaved[part] ~= nil then
+                                part.Transparency = entitiesSaved[part]
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        if not delete then entitiesSaved = {} end
+        log(delete and "Delete Entities: ĐÃ BẬT (ẩn thực thể)" or "Delete Entities: ĐÃ TẮT (khôi phục thực thể)")
+    end
+
+    ui:SetToggleHandler("DeleteEntities", function(enabled)
+        setEntitiesDeleted(enabled)
+    end)
+    if state.DeleteEntities == true then task.defer(function() setEntitiesDeleted(true) end) end
 end
 
 return BoostPerformance
@@ -9570,7 +9970,7 @@ function AutoTrialOfTheSaint.Init(ctx, ui)
 
     if type(state.TrialEndings) ~= "table" then
         state.TrialEndings = {
-            ["True ending"] = true,
+            ["True ending"] = false,
             ["Secret ending"] = false,
         }
     end

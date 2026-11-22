@@ -17,7 +17,7 @@ function AutoTrialOfTheSaint.Init(ctx, ui)
 
     if type(state.TrialEndings) ~= "table" then
         state.TrialEndings = {
-            ["True ending"] = true,
+            ["True ending"] = false,
             ["Secret ending"] = false,
         }
     end

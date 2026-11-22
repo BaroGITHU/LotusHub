@@ -441,20 +441,9 @@ function Menu.Create(ctx)
     -- OFF: nền C.track (tối), núm trắng nằm bên TRÁI tại (3, 3), state = false
     -- ON:  nền C.on (sáng), núm trắng nằm bên PHẢI tại (39, 3), state = true
     -- Vị trí và màu sắc cập nhật tức thời bằng gán thuộc tính trực tiếp khi click
+    -- CHỈ kích hoạt khi bấm trực tiếp vào cần gạt (track), KHÔNG kích hoạt khi click vào ô hàng (row)
     local function toggleItem(parent, text, readValue, saveValue)
         local row = itemFrame(parent, 44)
-
-        local rowButton = new("TextButton", row, {
-            Name = "RowClickArea",
-            Size = UDim2.new(1, 0, 1, 0),
-            Position = UDim2.fromOffset(0, 0),
-            BackgroundTransparency = 1,
-            Text = "",
-            AutoButtonColor = false,
-            Active = true,
-            Selectable = false,
-            ZIndex = 1,
-        })
 
         label(row, text, {
             Position = UDim2.fromOffset(14, 0),
@@ -505,7 +494,6 @@ function Menu.Create(ctx)
             redraw()
         end
 
-        rowButton.MouseButton1Click:Connect(triggerToggle)
         track.MouseButton1Click:Connect(triggerToggle)
 
         return row
@@ -525,7 +513,7 @@ function Menu.Create(ctx)
             if type(handler) == "table" then
                 for _, h in ipairs(handler) do pcall(h, value) end
             elseif type(handler) == "function" then
-                handler(value)
+                pcall(handler, value)
             else
                 print("[LotusHub UI] " .. key .. " = " .. tostring(value) .. " (chỉ UI)")
             end

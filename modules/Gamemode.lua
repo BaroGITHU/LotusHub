@@ -17,7 +17,7 @@ function Gamemode.Init(ctx, ui)
         AutoHorseRacing = false,
         AutoTrialOfTheSaint = false,
         TrialEndings = {
-            ["True ending"] = true,
+            ["True ending"] = false,
             ["Secret ending"] = false,
         },
     }
@@ -133,6 +133,8 @@ function Gamemode.Init(ctx, ui)
         elLayout.Padding = UDim.new(0, 6)
         elLayout.Parent = endingRows
 
+        local updateVisuals = {}
+
         for index, item in ipairs(endingList) do
             local itemRow = Instance.new("Frame")
             itemRow.Size = UDim2.new(1, 0, 0, 42)
@@ -185,11 +187,22 @@ function Gamemode.Init(ctx, ui)
                 selectBtn.TextColor3 = isSelected and Color3.fromRGB(255, 255, 255) or C.muted
                 selectBtn.Text = isSelected and "CHỌN ✓" or "BỎ QUA"
             end
+            table.insert(updateVisuals, updateBtnVisual)
             updateBtnVisual()
 
             selectBtn.Activated:Connect(function()
-                state.TrialEndings[item.Name] = not state.TrialEndings[item.Name]
-                updateBtnVisual()
+                local willSelect = not (state.TrialEndings[item.Name] == true)
+                if willSelect then
+                    for _, other in ipairs(endingList) do
+                        state.TrialEndings[other.Name] = false
+                    end
+                    state.TrialEndings[item.Name] = true
+                else
+                    state.TrialEndings[item.Name] = false
+                end
+                for _, fn in ipairs(updateVisuals) do
+                    fn()
+                end
                 if type(ctx.SaveConfig) == "function" then
                     pcall(ctx.SaveConfig)
                 end
